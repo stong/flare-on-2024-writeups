@@ -1,0 +1,1195 @@
+/
+/* ====================================================================================== */
+/* This file contains information about ELF relocations, for                              */
+/* use by the 'pelf' utility.                                                             */
+/*                                                                                        */
+/* Since 'pelf' is in charge of creating a '.pat' pattern file,                           */
+/* that contains sequences of bytes representing code to be later                         */
+/* matched in binaries, it is important that portions of that                             */
+/* code that is [link|run]time-dependent be ignored when trying to                        */
+/* match patterns.                                                                        */
+/*                                                                                        */
+/* For example, if pelf is processing a relocatable ELF file, which                       */
+/* contains the following Intel x86 code:                                                 */
+/* >>   call some_function                                                                */
+/* or, in binary form:                                                                    */
+/* >>   0xE8 0x00 0x00 0x00 0x00                                                          */
+/* and since the final address of 'some_function' is not known at                         */
+/* this time (i.e., it will be determined at link-time. For the moment,                   */
+/* it is filled with zeroes), the bytes for the address of 'some_function'                */
+/* that immediately follow the byte for the call opcode itself,                           */
+/* (thus, the zeroes) must be ignored and not present in the resulting .pat               */
+/* file.                                                                                  */
+/*                                                                                        */
+/* This is an easy scenario, as this relocation is simple. But, every                     */
+/* machine has its own set of relocations and, while in the example above,                */
+/* the relocation touches 4 full consecutive bytes, it's not always the                   */
+/* case.                                                                                  */
+/*                                                                                        */
+/* The tables contained in this file hold enough information for pelf to know             */
+/* what bytes to ignore when a given relocation is encountered.                           */
+/* Here is the format for those tables:                                                   */
+/* ----                                                                                   */
+/* TABLE <proc> [<proc>...]:                                                              */
+/*       <reloc-nr>, <offset-lsb>, <offset-msb>, <size>                                   */
+/*       ...                                                                              */
+/*                                                                                        */
+/* proc: The 'machine number', as specified in the ELF                                    */
+/*       specification: http://www.sco.com/developers/gabi/latest/ch4.eheader.html        */
+/*       Note that you can have more than 1 machine number to which                       */
+/*       the table of relocation informations applies.                                    */
+/* reloc-nr: The relocation number (machine-dependent).                                   */
+/*           E.g., if <proc> is 3 (i.e., EM_386), and <reloc-nr> is 2,                    */
+/*           then this line in the table contains relocation information                  */
+/*           for the relocation "R_386_PC32"                                              */
+/* offset-lsb: The offset, in bytes, starting at the beginning of the                     */
+/*             relocation field, where the data will be modified at                       */
+/*             relocation-time.                                                           */
+/* offset-msb: The same thing, but when the processor is big-endian.                      */
+/* size: The number of bytes that will be modified at relocation-time.                    */
+/* ----                                                                                   */
+/*                                                                                        */
+/* Take, for example, the ARM relocation     /*R_ARM_TLS_CALL*/91: its bits are spread              */
+/* across 3 bytes, and that relocation is set to start at the beginning of the            */
+/* instruction.                                                                           */
+/* In this situation, we will define that relocation as follows:                          */
+/*      91,   0,   1,   3                                                                 */
+/*      ^     ^    ^    ^                                                                 */
+/*      |     |    |    `----- Spans on 3 bytes. I.e., 3 bytes to ignore.                 */
+/*      |     |    `---------- For big-endian CPUs: starts at byte #1.                    */
+/*      |     `--------------- For little-endian CPUs: starts at byte #0.                 */
+/*      `--------------------- Relocation nr.                                             */
+/*                                                                                        */
+/*                 _________________________________________________                      */
+/*                                                                                        */
+/* As an exercice, let's try adding the following relocations for the ARM machine:        */
+/*  -     /*R_ARM_THM_MOVW_PREL_NC*/49                                                              */
+/*  -     /*R_ARM_THM_MOVT_PREL*/50                                                                 */
+/*  -     /*R_ARM_THM_PC12*/54                                                                      */
+/*                                                                                        */
+/* The documentation states that their numbers are:                                       */
+/*  -     /*R_ARM_THM_MOVW_PREL_NC*/49: 49                                                          */
+/*  -     /*R_ARM_THM_MOVT_PREL*/50: 50                                                             */
+/*  -     /*R_ARM_THM_PC12*/54: 54                                                                  */
+/*                                                                                        */
+/* Looking at binutils' "elf32-arm.c" file lets us see their masks:                       */
+/*  -     /*R_ARM_THM_MOVW_PREL_NC*/49: 0x040f70ff                                                  */
+/*  -     /*R_ARM_THM_MOVT_PREL*/50: 0x040f70ff                                                     */
+/*  -     /*R_ARM_THM_PC12*/54: 0x040070ff                                                          */
+/*                                                                                        */
+/* Thus, we can see that for the first two relocations, the variable bits are             */
+/* scattered all over the 4 bytes of the instruction.                                     */
+/* We can't rely on any of the bytes to remain constant, so we'll have to mark            */
+/* all 4 of them as variable.                                                             */
+/* Additionally, since 4 bytes in a 4-byte instruction start at offset 0 regardless       */
+/* of whether it's little or big endian, we need to use offset 0 in both cases.           */
+/* Thus:                                                                                  */
+/*    49,   0,   0,   4                                                                   */
+/*    50,   0,   0,   4                                                                   */
+/*                                                                                        */
+/* The third relocation does have a fixed byte (00 in the mask), but unfortunately        */
+/* it's in the middle of the instruction, a variation which is not supported by           */
+/* pelf. So we'll have to mark all 4 bytes as well:                                       */
+/*    54,   0,   0,   4                                                                   */
+/*                                                                                        */
+/* Note: it is not always easy to find the documentation pertaining to the relocations    */
+/* you want to add support for in pelf. A notoriously helpful way to determine the way    */
+/* relocations are laid out is, as we just did in the example above, to take a peek into  */
+/* binutils' source files for the relevant architecture.                                  */
+/* ====================================================================================== */
+
+
+/* Note: Keeping the x86 on top, as it's probably the most often used */
+/* To understand negative offsets in this table see binutils, elf32-i386.c */
+TABLE 3 6:    /*EM_386*/                     /*EM_486*/                    
+       0,    0,    0,    0    /*R_386_NONE*/                
+       5,    0,    0,    0    /*R_386_COPY*/                
+       7,    0,    0,    4    /*R_386_JMP_SLOT*/            
+       9,    0,    0,    4    /*R_386_GOTOFF*/              
+      10,    0,    0,    4    /*R_386_GOTPC*/               
+       8,    0,    0,    4    /*R_386_RELATIVE*/            
+       4,    0,    0,    4    /*R_386_PLT32*/               
+       3,    0,    0,    4    /*R_386_GOT32*/               
+       2,    0,    0,    4    /*R_386_PC32*/                
+       1,    0,    0,    4    /*R_386_32*/                  
+       6,    0,    0,    4    /*R_386_GLOB_DAT*/            
+      14,    0,    0,    4    /*R_386_TLS_TPOFF*/           
+      15,   -2,   -2,    6    /*R_386_TLS_IE*/              
+      16,   -2,   -2,    6    /*R_386_TLS_GOTIE*/           
+      17,    0,    0,    4    /*R_386_TLS_LE*/              
+      18,   -3,   -3,   12    /*R_386_TLS_GD*/               /* this is not quite correct */
+      19,    0,    0,    4    /*R_386_TLS_LDM*/             
+      32,    0,    0,    4    /*R_386_TLS_LDO_32*/          
+      33,   -2,   -2,    6    /*R_386_TLS_IE_32*/           
+      34,   -2,   -2,   11    /*R_386_TLS_LE_32*/           
+      35,    0,    0,    4    /*R_386_TLS_DTPMOD32*/        
+      36,    0,    0,    4    /*R_386_TLS_DTPOFF32*/        
+      37,    0,    0,    4    /*R_386_TLS_TPOFF32*/         
+      39,   -1,   -1,    5    /*R_386_TLS_GOTDESC*/         
+      40,    0,    0,    2    /*R_386_TLS_DESC_CALL*/        /* call *(%eax) => xchg %ax,%ax */
+      20,    0,    0,    2    /*R_386_16*/                  
+      21,    0,    0,    2    /*R_386_PC16*/                
+      22,    0,    0,    1    /*R_386_8*/                   
+      23,    0,    0,    1    /*R_386_PC8*/                 
+      43,    0,    0,    4    /*R_386_GOT32X*/              
+
+TABLE 62:    /*EM_X86_64*/                 
+      10,    0,    0,    4    /*R_X86_64_32*/               
+      11,    0,    0,    4    /*R_X86_64_32S*/              
+       2,    0,    0,    4    /*R_X86_64_PC32*/             
+/* http://www.x86-64.org/documentation/abi.pdf $4.4 */
+/* http://people.redhat.com/drepper/tls.pdf */
+      22,    0,    0,    4    /*R_X86_64_GOTTPOFF*/         
+      23,    0,    0,    4    /*R_X86_64_TPOFF32*/          
+       4,    0,    0,    4    /*R_X86_64_PLT32*/            
+       9,    0,    0,    4    /*R_X86_64_GOTPCREL*/         
+      41,   -2,   -2,    6    /*R_X86_64_GOTPCRELX*/        
+      42,   -2,   -2,    6    /*R_X86_64_REX_GOTPCRELX*/    
+       1,    0,    0,    8    /*R_X86_64_64*/               
+      24,    0,    0,    8    /*R_X86_64_PC64*/             
+      27,    0,    0,    8    /*R_X86_64_GOT64*/            
+      28,    0,    0,    8    /*R_X86_64_GOTPCREL64*/       
+      29,    0,    0,    8    /*R_X86_64_GOTPC64*/          
+      30,    0,    0,    8    /*R_X86_64_GOTPLT64*/         
+      31,    0,    0,    8    /*R_X86_64_PLTOFF64*/         
+      19,    0,    0,    4    /*R_X86_64_TLSGD*/            
+      20,    0,    0,    4    /*R_X86_64_TLSLD*/            
+      21,    0,    0,    4    /*R_X86_64_DTPOFF32*/         
+      26,    0,    0,    4    /*R_X86_64_GOTPC32*/          
+
+
+TABLE 19:    /*EM_I960*/                   
+       0,    0,    0,    0    /*R_960_NONE*/                
+       2,    0,    0,    4    /*R_960_32*/                  
+       4,    0,    0,    4    /*R_960_SUB*/                 
+       3,    0,    1,    3    /*R_960_IP24*/                
+       5,    0,    1,    3    /*R_960_OPTCALL*/             
+       6,    4,    4,    4    /*R_960_OPTCALLX*/            
+       7,    4,    4,    4    /*R_960_OPTCALLXA*/           
+
+TABLE 93:    /*EM_ARCOMPACT*/              
+       0,    0,    0,    0    /*R_ARC_NONE*/                
+      52,    0,    0,    4    /*R_ARC_PLT32*/               
+      59,    0,    0,    4    /*R_ARC_GOT32*/               
+      58,    0,    0,    4    /*R_ARC_GOTPC*/               
+      57,    0,    0,    4    /*R_ARC_GOTOFF*/              
+      54,    0,    0,    4    /*R_ARC_GLOB_DAT*/            
+      55,    0,    0,    4    /*R_ARC_JMP_SLOT*/            
+      56,    0,    0,    4    /*R_ARC_RELATIVE*/            
+      16,    0,    0,    4    /*R_ARC_S25H_PCREL*/          
+      14,    0,    0,    4    /*R_ARC_S21H_PCREL*/          
+      17,    0,    0,    4    /*R_ARC_S25W_PCREL*/          
+      27,    0,    0,    4    /*R_ARC_32_ME*/               
+       4,    0,    0,    4    /*R_ARC_32*/                  
+      29,    0,    0,    4    /*R_ARC_SECTOFF_ME*/          
+
+TABLE 53:    /*EM_6812*/                   
+       0,    0,    0,    0    /*R_M68HC11_NONE*/            
+       1,    0,    0,    1    /*R_M68HC11_8*/               
+       3,    0,    0,    1    /*R_M68HC11_LO8*/             
+       2,    0,    0,    1    /*R_M68HC11_HI8*/             
+       4,    0,    0,    1    /*R_M68HC11_PCREL_8*/         
+       7,    0,    0,    1    /*R_M68HC11_3B*/              
+       5,   -1,   -1,    2    /*R_M68HC11_16*/               /* !!! quite strange but seems to be right */
+       8,   -1,   -1,    2    /*R_M68HC11_PCREL_16*/        
+       9,    0,    0,    1    /* unknown; used by Metrowerks/Freescale compiler */
+
+TABLE 71:    /*EM_68HC08*/                 
+       0,    0,    0,    0    /*R_M68HC11_NONE*/            
+       1,    0,    0,    1    /*R_M68HC11_8*/               
+       3,    0,    0,    1    /*R_M68HC11_LO8*/             
+       2,    0,    0,    1    /*R_M68HC11_HI8*/             
+       4,    0,    0,    1    /*R_M68HC11_PCREL_8*/         
+       7,    0,    0,    1    /*R_M68HC11_3B*/              
+       5,   -1,   -1,    2    /*R_M68HC11_16*/               /* !!! quite strange but seems to be right */
+       8,   -1,   -1,    2    /*R_M68HC11_PCREL_16*/        
+
+TABLE 42:    /*EM_SH*/                     
+       0,    0,    0,    0    /*R_SH_NONE*/                 
+     162,    0,    0,    4    /*R_SH_COPY*/                 
+     163,    0,    0,    4    /*R_SH_GLOB_DAT*/             
+     164,    0,    0,    4    /*R_SH_JMP_SLOT*/             
+     165,    0,    0,    4    /*R_SH_RELATIVE*/             
+       1,    0,    0,    4    /*R_SH_DIR32*/                
+      33,    0,    0,    2    /*R_SH_DIR16*/                
+      34,    0,    0,    1    /*R_SH_DIR8*/                 
+      39,    0,    0,    1    /*R_SH_DIR8S*/                
+     160,    0,    0,    4    /*R_SH_GOT32*/                
+     161,    0,    0,    4    /*R_SH_PLT32*/                
+     165,    0,    0,    4    /*R_SH_RELATIVE*/             
+     166,    0,    0,    4    /*R_SH_GOTOFF*/               
+     167,    0,    0,    4    /*R_SH_GOTPC*/                
+     168,    0,    0,    4    /*R_SH_GOTPLT32*/             
+
+TABLE 0x70FF: /    /*EM_NECV850*/                
+       0,    0,    0,    0    /*R_SH_NONE*/                 
+
+TABLE EM_NECV850E1:
+       0,    0,    0,    0    /*R_SH_NONE*/                 
+
+TABLE 0x71EA:    /*EM_NECV850E2*/              
+       0,    0,    0,    0    /*R_SH_NONE*/                 
+
+TABLE EM_NECV850Ex:
+       0,    0,    0,    0    /*R_SH_NONE*/                 
+
+TABLE 67: /    /*EM_ST9*/                    
+       0,    0,    0,    0    /*R_SH_NONE*/                 
+      14,    0,    0,    2    /*R_ST9_16_EXTERN*/           
+       2,    0,    0,    2    /*R_ST9_2_FLOAT_DPR*/         
+      10,    0,    0,    2    /*R_ST9_14_POF*/              
+
+TABLE 22 0xa390:    /*EM_S390*/                    /*EM_S390_OLD*/               
+       0,    0,    0,    0    /*R_390_NONE*/                 /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+       1,    0,    0,    1    /*R_390_8*/                    /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+       2,    0,    0,    2    /*R_390_12*/                   /* sz = 2, bitsize = 12, dst_mask = 0x0000000000000fff */
+       3,    0,    0,    2    /*R_390_16*/                   /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       4,    0,    0,    4    /*R_390_32*/                   /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       5,    0,    0,    4    /*R_390_PC32*/                 /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       6,    0,    0,    2    /*R_390_GOT12*/                /* sz = 2, bitsize = 12, dst_mask = 0x0000000000000fff */
+       7,    0,    0,    4    /*R_390_GOT32*/                /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       8,    0,    0,    4    /*R_390_PLT32*/                /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       9,    0,    0,    8    /*R_390_COPY*/                 /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      10,    0,    0,    8    /*R_390_GLOB_DAT*/             /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      11,    0,    0,    8    /*R_390_JMP_SLOT*/             /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      12,    0,    0,    8    /*R_390_RELATIVE*/             /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      13,    0,    0,    8    /*R_390_GOTOFF*/               /* sz = 4, bitsize = 32, dst_mask = 0xffffffffffffffff */
+      14,    0,    0,    8    /*R_390_GOTPC*/                /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      15,    0,    0,    2    /*R_390_GOT16*/                /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      16,    0,    0,    2    /*R_390_PC16*/                 /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      17,    0,    0,    2    /*R_390_PC16DBL*/              /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      18,    0,    0,    2    /*R_390_PLT16DBL*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      19,    0,    0,    4    /*R_390_PC32DBL*/              /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      20,    0,    0,    4    /*R_390_PLT32DBL*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      21,    0,    0,    8    /*R_390_GOTPCDBL*/             /* sz = 4, bitsize = 32, dst_mask = 0xffffffffffffffff */
+      22,    0,    0,    8    /*R_390_64*/                   /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      23,    0,    0,    8    /*R_390_PC64*/                 /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      24,    0,    0,    8    /*R_390_GOT64*/                /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      25,    0,    0,    8    /*R_390_PLT64*/                /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      26,    0,    0,    8    /*R_390_GOTENT*/               /* sz = 4, bitsize = 32, dst_mask = 0xffffffffffffffff */
+      27,    0,    0,    2    /*R_390_GOTOFF16*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      28,    0,    0,    8    /*R_390_GOTOFF64*/             /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      29,    0,    0,    2    /*R_390_GOTPLT12*/             /* sz = 2, bitsize = 12, dst_mask = 0x0000000000000fff */
+      30,    0,    0,    2    /*R_390_GOTPLT16*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      31,    0,    0,    4    /*R_390_GOTPLT32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      32,    0,    0,    8    /*R_390_GOTPLT64*/             /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      33,    0,    0,    8    /*R_390_GOTPLTENT*/            /* sz = 4, bitsize = 32, dst_mask = 0xffffffffffffffff */
+      34,    0,    0,    2    /*R_390_PLTOFF16*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      35,    0,    0,    4    /*R_390_PLTOFF32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      36,    0,    0,    8    /*R_390_PLTOFF64*/             /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      37,    0,    0,    0    /*R_390_TLS_LOAD*/             /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      38,    0,    0,    0    /*R_390_TLS_GDCALL*/           /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      39,    0,    0,    0    /*R_390_TLS_LDCALL*/           /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      41,    0,    0,    8    /*R_390_TLS_GD64*/             /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      42,    0,    0,    2    /*R_390_TLS_GOTIE12*/          /* sz = 2, bitsize = 12, dst_mask = 0x0000000000000fff */
+      44,    0,    0,    8    /*R_390_TLS_GOTIE64*/          /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      46,    0,    0,    8    /*R_390_TLS_LDM64*/            /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      48,    0,    0,    8    /*R_390_TLS_IE64*/             /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      49,    0,    0,    8    /*R_390_TLS_IEENT*/            /* sz = 4, bitsize = 32, dst_mask = 0xffffffffffffffff */
+      51,    0,    0,    8    /*R_390_TLS_LE64*/             /* sz = 4, bitsize = 32, dst_mask = 0xffffffffffffffff */
+      53,    0,    0,    8    /*R_390_TLS_LDO64*/            /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      54,    0,    0,    8    /*R_390_TLS_DTPMOD*/           /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      55,    0,    0,    8    /*R_390_TLS_DTPOFF*/           /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      56,    0,    0,    8    /*R_390_TLS_TPOFF*/            /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      57,    1,    0,    3    /*R_390_20*/                   /* sz = 4, bitsize = 20, dst_mask = 0x000000000fffff00 */
+      58,    1,    0,    3    /*R_390_GOT20*/                /* sz = 4, bitsize = 20, dst_mask = 0x000000000fffff00 */
+      59,    1,    0,    3    /*R_390_GOTPLT20*/             /* sz = 4, bitsize = 20, dst_mask = 0x000000000fffff00 */
+      60,    1,    0,    3    /*R_390_TLS_GOTIE20*/          /* sz = 4, bitsize = 20, dst_mask = 0x000000000fffff00 */
+      61,    0,    0,    8    /*R_390_IRELATIVE*/            /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      62,    0,    0,    2    /*R_390_PC12DBL*/              /* sz = 2, bitsize = 12, dst_mask = 0x0000000000000fff */
+      63,    0,    0,    2    /*R_390_PLT12DBL*/             /* sz = 2, bitsize = 12, dst_mask = 0x0000000000000fff */
+      64,    0,    1,    3    /*R_390_PC24DBL*/              /* sz = 4, bitsize = 24, dst_mask = 0x0000000000ffffff */
+      65,    0,    1,    3    /*R_390_PLT24DBL*/             /* sz = 4, bitsize = 24, dst_mask = 0x0000000000ffffff */
+
+TABLE 8 10 51:    /*EM_MIPS*/                    /*EM_MIPS_RS3_BE*/             /*EM_MIPS_X*/                 
+       0,    0,    0,    0    /*R_MIPS_NONE*/                /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+       1,    0,    2,    2    /*R_MIPS_16*/                  /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+       2,    0,    0,    4    /*R_MIPS_32*/                  /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       3,    0,    0,    4    /*R_MIPS_REL*/                 /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       4,    0,    0,    4    /*R_MIPS_26*/                  /* sz = 4, bitsize = 26, dst_mask = 0x0000000003ffffff */
+       5,    0,    2,    2    /*R_MIPS_HI16*/                /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+       6,    0,    2,    2    /*R_MIPS_LO16*/                /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+       7,    0,    2,    2    /*R_MIPS_GPREL*/               /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+       8,    0,    2,    2    /*R_MIPS_LITERAL*/             /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+       9,    0,    2,    2    /*R_MIPS_GOT*/                 /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      10,    0,    2,    2    /*R_MIPS_PC16*/                /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      11,    0,    2,    2    /*R_MIPS_CALL*/                /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      12,    0,    0,    4    /*R_MIPS_GPREL32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      16,    0,    2,    2    /*R_MIPS_SHIFT5*/              /* sz = 4, bitsize =  5, dst_mask = 0x00000000000007c0 */
+      17,    0,    2,    2    /*R_MIPS_SHIFT6*/              /* sz = 4, bitsize =  6, dst_mask = 0x00000000000007c4 */
+      18,    0,    0,    8    /*R_MIPS_64*/                  /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      19,    0,    2,    2    /*R_MIPS_GOT_DISP*/            /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      20,    0,    2,    2    /*R_MIPS_GOT_PAGE*/            /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      21,    0,    2,    2    /*R_MIPS_GOT_OFST*/            /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      22,    0,    2,    2    /*R_MIPS_GOT_HI16*/            /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      23,    0,    2,    2    /*R_MIPS_GOT_LO16*/            /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      24,    0,    0,    8    /*R_MIPS_SUB*/                 /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      28,    0,    2,    2    /*R_MIPS_HIGHER*/              /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      29,    0,    2,    2    /*R_MIPS_HIGHEST*/             /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      30,    0,    2,    2    /*R_MIPS_CALL_HI16*/           /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      31,    0,    2,    2    /*R_MIPS_CALL_LO16*/           /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      32,    0,    0,    4    /*R_MIPS_SCN_DISP*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      37,    0,    0,    4    /*R_MIPS_JALR*/                /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+      38,    0,    0,    4    /*R_MIPS_TLS_DTPMOD32*/        /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      39,    0,    0,    4    /*R_MIPS_TLS_DTPREL32*/        /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      42,    0,    2,    2    /*R_MIPS_TLS_GD*/              /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      43,    0,    2,    2    /*R_MIPS_TLS_LDM*/             /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      44,    0,    2,    2    /*R_MIPS_TLS_DTPREL_HI16*/     /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      45,    0,    2,    2    /*R_MIPS_TLS_DTPREL_LO16*/     /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      46,    0,    2,    2    /*R_MIPS_TLS_GOTTPREL*/        /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      47,    0,    0,    4    /*R_MIPS_TLS_TPREL32*/         /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      49,    0,    2,    2    /*R_MIPS_TLS_TPREL_HI16*/      /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      50,    0,    2,    2    /*R_MIPS_TLS_TPREL_LO16*/      /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      51,    0,    0,    4    /*R_MIPS_GLOB_DAT*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      60,    0,    1,    3    /*R_MIPS_PC21_S2*/             /* sz = 4, bitsize = 21, dst_mask = 0x00000000001fffff */
+      61,    0,    0,    4    /*R_MIPS_PC26_S2*/             /* sz = 4, bitsize = 26, dst_mask = 0x0000000003ffffff */
+      62,    0,    1,    3    /*R_MIPS_PC18_S3*/             /* sz = 4, bitsize = 18, dst_mask = 0x000000000003ffff */
+      63,    0,    1,    3    /*R_MIPS_PC19_S2*/             /* sz = 4, bitsize = 19, dst_mask = 0x000000000007ffff */
+      64,    0,    2,    2    /*R_MIPS_PCHI16*/              /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      65,    0,    2,    2    /*R_MIPS_PCLO16*/              /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     100,    0,    0,    4    /*R_MIPS16_26*/                /* sz = 4, bitsize = 26, dst_mask = 0x0000000003ffffff */
+     101,    0,    2,    2    /*R_MIPS16_GPREL*/             /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     102,    0,    2,    2    /*R_MIPS16_GOT16*/             /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     103,    0,    2,    2    /*R_MIPS16_CALL16*/            /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     104,    0,    2,    2    /*R_MIPS16_HI16*/              /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     105,    0,    2,    2    /*R_MIPS16_LO16*/              /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     106,    0,    2,    2    /*R_MIPS16_TLS_GD*/            /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     107,    0,    2,    2    /*R_MIPS16_TLS_LDM*/           /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     108,    0,    2,    2    /*R_MIPS16_TLS_DTPREL_HI16*/   /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     109,    0,    2,    2    /*R_MIPS16_TLS_DTPREL_LO16*/   /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     110,    0,    2,    2    /*R_MIPS16_TLS_GOTTPREL*/      /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     111,    0,    2,    2    /*R_MIPS16_TLS_TPREL_HI16*/    /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     112,    0,    2,    2    /*R_MIPS16_TLS_TPREL_LO16*/    /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     113,    0,    2,    2    /*R_MIPS16_PC16_S1*/           /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     133,    0,    0,    4    /*R_MICROMIPS_26_S1*/          /* sz = 4, bitsize = 26, dst_mask = 0x0000000003ffffff */
+     134,    0,    2,    2    /*R_MICROMIPS_HI16*/           /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     135,    0,    2,    2    /*R_MICROMIPS_LO16*/           /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     136,    0,    2,    2    /*R_MICROMIPS_GPREL16*/        /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     137,    0,    2,    2    /*R_MICROMIPS_LITERAL*/        /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     138,    0,    2,    2    /*R_MICROMIPS_GOT16*/          /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     139,    0,    1,    1    /*R_MICROMIPS_PC7_S1*/         /* sz = 2, bitsize =  7, dst_mask = 0x000000000000007f */
+     140,    0,    0,    2    /*R_MICROMIPS_PC10_S1*/        /* sz = 2, bitsize = 10, dst_mask = 0x00000000000003ff */
+     141,    0,    2,    2    /*R_MICROMIPS_PC16_S1*/        /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     142,    0,    2,    2    /*R_MICROMIPS_CALL16*/         /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     145,    0,    2,    2    /*R_MICROMIPS_GOT_DISP*/       /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     146,    0,    2,    2    /*R_MICROMIPS_GOT_PAGE*/       /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     147,    0,    2,    2    /*R_MICROMIPS_GOT_OFST*/       /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     148,    0,    2,    2    /*R_MICROMIPS_GOT_HI16*/       /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     149,    0,    2,    2    /*R_MICROMIPS_GOT_LO16*/       /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     150,    0,    0,    8    /*R_MICROMIPS_SUB*/            /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+     151,    0,    2,    2    /*R_MICROMIPS_HIGHER*/         /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     152,    0,    2,    2    /*R_MICROMIPS_HIGHEST*/        /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     153,    0,    2,    2    /*R_MICROMIPS_CALL_HI16*/      /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     154,    0,    2,    2    /*R_MICROMIPS_CALL_LO16*/      /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     155,    0,    0,    4    /*R_MICROMIPS_SCN_DISP*/       /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     156,    0,    0,    4    /*R_MICROMIPS_JALR*/           /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+     157,    0,    2,    2    /*R_MICROMIPS_HI0_LO16*/       /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     162,    0,    2,    2    /*R_MICROMIPS_TLS_GD*/         /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     163,    0,    2,    2    /*R_MICROMIPS_TLS_LDM*/        /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     164,    0,    2,    2    /*R_MICROMIPS_TLS_DTPREL_HI16*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     165,    0,    2,    2    /*R_MICROMIPS_TLS_DTPREL_LO16*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     166,    0,    2,    2    /*R_MICROMIPS_TLS_GOTTPREL*/   /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     169,    0,    2,    2    /*R_MICROMIPS_TLS_TPREL_HI16*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     170,    0,    2,    2    /*R_MICROMIPS_TLS_TPREL_LO16*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     172,    0,    1,    1    /*R_MICROMIPS_GPREL7_S2*/      /* sz = 2, bitsize =  7, dst_mask = 0x000000000000007f */
+     173,    0,    1,    3    /*R_MICROMIPS_PC23_S2*/        /* sz = 4, bitsize = 23, dst_mask = 0x00000000007fffff */
+    333831,    0,    2,    2
+    399367,    0,    2,    2
+    4620,    0,    0,    8
+
+TABLE 183:    /*EM_AARCH64*/                
+     256,    0,    0,    0    /*R_AARCH64_NONE*/             /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+     257,    0,    0,    8    /*R_AARCH64_ABS64*/            /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+     258,    0,    0,    4    /*R_AARCH64_ABS32*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     259,    0,    0,    2    /*R_AARCH64_ABS16*/            /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     260,    0,    0,    8    /*R_AARCH64_PREL64*/           /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+     261,    0,    0,    4    /*R_AARCH64_PREL32*/           /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     262,    0,    0,    2    /*R_AARCH64_PREL16*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     263,    0,    2,    2    /*R_AARCH64_MOVW_UABS_G0*/     /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     264,    0,    2,    2    /*R_AARCH64_MOVW_UABS_G0_NC*/  /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     265,    0,    2,    2    /*R_AARCH64_MOVW_UABS_G1*/     /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     266,    0,    2,    2    /*R_AARCH64_MOVW_UABS_G1_NC*/  /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     267,    0,    2,    2    /*R_AARCH64_MOVW_UABS_G2*/     /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     268,    0,    2,    2    /*R_AARCH64_MOVW_UABS_G2_NC*/  /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     269,    0,    2,    2    /*R_AARCH64_MOVW_UABS_G3*/     /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     270,    0,    2,    2    /*R_AARCH64_MOVW_SABS_G0*/     /* sz = 4, bitsize = 17, dst_mask = 0x000000000000ffff */
+     271,    0,    2,    2    /*R_AARCH64_MOVW_SABS_G1*/     /* sz = 4, bitsize = 17, dst_mask = 0x000000000000ffff */
+     272,    0,    2,    2    /*R_AARCH64_MOVW_SABS_G2*/     /* sz = 4, bitsize = 17, dst_mask = 0x000000000000ffff */
+     287,    0,    2,    2    /*R_AARCH64_MOVW_PREL_G0*/     /* sz = 4, bitsize = 17, dst_mask = 0x000000000000ffff */
+     288,    0,    2,    2    /*R_AARCH64_MOVW_PREL_G0_NC*/  /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     289,    0,    2,    2    /*R_AARCH64_MOVW_PREL_G1*/     /* sz = 4, bitsize = 17, dst_mask = 0x000000000000ffff */
+     290,    0,    2,    2    /*R_AARCH64_MOVW_PREL_G1_NC*/  /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     291,    0,    2,    2    /*R_AARCH64_MOVW_PREL_G2*/     /* sz = 4, bitsize = 17, dst_mask = 0x000000000000ffff */
+     292,    0,    2,    2    /*R_AARCH64_MOVW_PREL_G2_NC*/  /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     293,    0,    2,    2    /*R_AARCH64_MOVW_PREL_G3*/     /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     273,    0,    1,    3    /*R_AARCH64_LD_PREL_LO19*/     /* sz = 4, bitsize = 19, dst_mask = 0x000000000007ffff */
+     274,    0,    1,    3    /*R_AARCH64_ADR_PREL_LO21*/    /* sz = 4, bitsize = 21, dst_mask = 0x00000000001fffff */
+     275,    0,    1,    3    /*R_AARCH64_ADR_PREL_PG_HI21*/ /* sz = 4, bitsize = 21, dst_mask = 0x00000000001fffff */
+     276,    0,    1,    3    /*R_AARCH64_ADR_PREL_PG_HI21_NC*/ /* sz = 4, bitsize = 21, dst_mask = 0x00000000001fffff */
+     277,    1,    1,    2    /*R_AARCH64_ADD_ABS_LO12_NC*/  /* sz = 4, bitsize = 12, dst_mask = 0x00000000003ffc00 */
+     278,    0,    2,    2    /*R_AARCH64_LDST8_ABS_LO12_NC*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+     279,    0,    2,    2    /*R_AARCH64_TSTBR14*/          /* sz = 4, bitsize = 14, dst_mask = 0x0000000000003fff */
+     280,    0,    1,    3    /*R_AARCH64_CONDBR19*/         /* sz = 4, bitsize = 19, dst_mask = 0x000000000007ffff */
+     282,    0,    0,    4    /*R_AARCH64_JUMP26*/           /* sz = 4, bitsize = 26, dst_mask = 0x0000000003ffffff */
+     283,    0,    0,    4    /*R_AARCH64_CALL26*/           /* sz = 4, bitsize = 26, dst_mask = 0x0000000003ffffff */
+     284,    0,    2,    2    /*R_AARCH64_LDST16_ABS_LO12_NC*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000ffe */
+     285,    0,    2,    2    /*R_AARCH64_LDST32_ABS_LO12_NC*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000ffc */
+     286,    0,    2,    2    /*R_AARCH64_LDST64_ABS_LO12_NC*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000ff8 */
+     299,    0,    2,    2    /*R_AARCH64_LDST128_ABS_LO12_NC*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000ff0 */
+     309,    0,    1,    3    /*R_AARCH64_GOT_LD_PREL19*/    /* sz = 4, bitsize = 19, dst_mask = 0x0000000000ffffe0 */
+     311,    0,    1,    3    /*R_AARCH64_ADR_GOT_PAGE*/     /* sz = 4, bitsize = 21, dst_mask = 0x00000000001fffff */
+     312,    0,    2,    2    /*R_AARCH64_LD64_GOT_LO12_NC*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000ff8 */
+     301,    0,    2,    2    /*R_AARCH64_MOVW_GOTOFF_G0_NC*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     302,    0,    2,    2    /*R_AARCH64_MOVW_GOTOFF_G1*/   /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     310,    0,    2,    2    /*R_AARCH64_LD64_GOTOFF_LO15*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000007ff8 */
+     313,    0,    2,    2    /*R_AARCH64_LD64_GOTPAGE_LO15*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000007ff8 */
+     513,    0,    1,    3    /*R_AARCH64_TLSGD_ADR_PAGE21*/ /* sz = 4, bitsize = 21, dst_mask = 0x00000000001fffff */
+     512,    0,    1,    3    /*R_AARCH64_TLSGD_ADR_PREL21*/ /* sz = 4, bitsize = 21, dst_mask = 0x00000000001fffff */
+     514,    0,    2,    2    /*R_AARCH64_TLSGD_ADD_LO12_NC*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+     516,    0,    2,    2    /*R_AARCH64_TLSGD_MOVW_G0_NC*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     515,    0,    2,    2    /*R_AARCH64_TLSGD_MOVW_G1*/    /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     541,    0,    1,    3    /*R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21*/ /* sz = 4, bitsize = 21, dst_mask = 0x00000000001fffff */
+     542,    0,    2,    2    /*R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000ff8 */
+     543,    0,    1,    3    /*R_AARCH64_TLSIE_LD_GOTTPREL_PREL19*/ /* sz = 4, bitsize = 19, dst_mask = 0x00000000001ffffc */
+     540,    0,    2,    2    /*R_AARCH64_TLSIE_MOVW_GOTTPREL_G0_NC*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     539,    0,    2,    2    /*R_AARCH64_TLSIE_MOVW_GOTTPREL_G1*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     528,    0,    2,    2    /*R_AARCH64_TLSLD_ADD_DTPREL_HI12*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+     529,    0,    2,    2    /*R_AARCH64_TLSLD_ADD_DTPREL_LO12*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+     530,    0,    2,    2    /*R_AARCH64_TLSLD_ADD_DTPREL_LO12_NC*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+     519,    0,    2,    2    /*R_AARCH64_TLSLD_ADD_LO12_NC*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+     518,    0,    1,    3    /*R_AARCH64_TLSLD_ADR_PAGE21*/ /* sz = 4, bitsize = 21, dst_mask = 0x00000000001fffff */
+     517,    0,    1,    3    /*R_AARCH64_TLSLD_ADR_PREL21*/ /* sz = 4, bitsize = 21, dst_mask = 0x00000000001fffff */
+     533,    1,    1,    2    /*R_AARCH64_TLSLD_LDST16_DTPREL_LO12*/ /* sz = 4, bitsize = 11, dst_mask = 0x00000000001ffc00 */
+     534,    1,    1,    2    /*R_AARCH64_TLSLD_LDST16_DTPREL_LO12_NC*/ /* sz = 4, bitsize = 11, dst_mask = 0x00000000001ffc00 */
+     535,    1,    1,    2    /*R_AARCH64_TLSLD_LDST32_DTPREL_LO12*/ /* sz = 4, bitsize = 10, dst_mask = 0x00000000003ffc00 */
+     536,    1,    1,    2    /*R_AARCH64_TLSLD_LDST32_DTPREL_LO12_NC*/ /* sz = 4, bitsize = 10, dst_mask = 0x00000000000ffc00 */
+     537,    1,    1,    2    /*R_AARCH64_TLSLD_LDST64_DTPREL_LO12*/ /* sz = 4, bitsize =  9, dst_mask = 0x00000000003ffc00 */
+     538,    1,    1,    2    /*R_AARCH64_TLSLD_LDST64_DTPREL_LO12_NC*/ /* sz = 4, bitsize =  9, dst_mask = 0x000000000007fc00 */
+     531,    1,    1,    2    /*R_AARCH64_TLSLD_LDST8_DTPREL_LO12*/ /* sz = 4, bitsize = 12, dst_mask = 0x00000000003ffc00 */
+     532,    1,    1,    2    /*R_AARCH64_TLSLD_LDST8_DTPREL_LO12_NC*/ /* sz = 4, bitsize = 12, dst_mask = 0x00000000003ffc00 */
+     526,    0,    2,    2    /*R_AARCH64_TLSLD_MOVW_DTPREL_G0*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     527,    0,    2,    2    /*R_AARCH64_TLSLD_MOVW_DTPREL_G0_NC*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     524,    0,    2,    2    /*R_AARCH64_TLSLD_MOVW_DTPREL_G1*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     525,    0,    2,    2    /*R_AARCH64_TLSLD_MOVW_DTPREL_G1_NC*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     523,    0,    2,    2    /*R_AARCH64_TLSLD_MOVW_DTPREL_G2*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     544,    0,    2,    2    /*R_AARCH64_TLSLE_MOVW_TPREL_G2*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     545,    0,    2,    2    /*R_AARCH64_TLSLE_MOVW_TPREL_G1*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     546,    0,    2,    2    /*R_AARCH64_TLSLE_MOVW_TPREL_G1_NC*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     547,    0,    2,    2    /*R_AARCH64_TLSLE_MOVW_TPREL_G0*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     548,    0,    2,    2    /*R_AARCH64_TLSLE_MOVW_TPREL_G0_NC*/ /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     549,    0,    2,    2    /*R_AARCH64_TLSLE_ADD_TPREL_HI12*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+     550,    0,    2,    2    /*R_AARCH64_TLSLE_ADD_TPREL_LO12*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+     551,    0,    2,    2    /*R_AARCH64_TLSLE_ADD_TPREL_LO12_NC*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+     554,    1,    1,    2    /*R_AARCH64_TLSLE_LDST16_TPREL_LO12*/ /* sz = 4, bitsize = 11, dst_mask = 0x00000000001ffc00 */
+     555,    1,    1,    2    /*R_AARCH64_TLSLE_LDST16_TPREL_LO12_NC*/ /* sz = 4, bitsize = 11, dst_mask = 0x00000000001ffc00 */
+     556,    1,    1,    2    /*R_AARCH64_TLSLE_LDST32_TPREL_LO12*/ /* sz = 4, bitsize = 10, dst_mask = 0x00000000000ffc00 */
+     557,    1,    1,    2    /*R_AARCH64_TLSLE_LDST32_TPREL_LO12_NC*/ /* sz = 4, bitsize = 10, dst_mask = 0x00000000000ffc00 */
+     558,    1,    1,    2    /*R_AARCH64_TLSLE_LDST64_TPREL_LO12*/ /* sz = 4, bitsize =  9, dst_mask = 0x000000000007fc00 */
+     559,    1,    1,    2    /*R_AARCH64_TLSLE_LDST64_TPREL_LO12_NC*/ /* sz = 4, bitsize =  9, dst_mask = 0x000000000007fc00 */
+     552,    1,    1,    2    /*R_AARCH64_TLSLE_LDST8_TPREL_LO12*/ /* sz = 4, bitsize = 12, dst_mask = 0x00000000003ffc00 */
+     553,    1,    1,    2    /*R_AARCH64_TLSLE_LDST8_TPREL_LO12_NC*/ /* sz = 4, bitsize = 12, dst_mask = 0x00000000003ffc00 */
+     560,    0,    1,    3    /*R_AARCH64_TLSDESC_LD_PREL19*/ /* sz = 4, bitsize = 19, dst_mask = 0x0000000000ffffe0 */
+     561,    0,    1,    3    /*R_AARCH64_TLSDESC_ADR_PREL21*/ /* sz = 4, bitsize = 21, dst_mask = 0x00000000001fffff */
+     562,    0,    1,    3    /*R_AARCH64_TLSDESC_ADR_PAGE21*/ /* sz = 4, bitsize = 21, dst_mask = 0x00000000001fffff */
+     563,    0,    2,    2    /*R_AARCH64_TLSDESC_LD64_LO12*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000ff8 */
+     564,    0,    2,    2    /*R_AARCH64_TLSDESC_ADD_LO12*/ /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+     565,    0,    2,    2    /*R_AARCH64_TLSDESC_OFF_G1*/   /* sz = 4, bitsize = 12, dst_mask = 0x000000000000ffff */
+     566,    0,    2,    2    /*R_AARCH64_TLSDESC_OFF_G0_NC*/ /* sz = 4, bitsize = 12, dst_mask = 0x000000000000ffff */
+     567,    0,    2,    2    /*R_AARCH64_TLSDESC_LDR*/      /* sz = 4, bitsize = 12, dst_mask = 000000000000000000 */
+     568,    0,    2,    2    /*R_AARCH64_TLSDESC_ADD*/      /* sz = 4, bitsize = 12, dst_mask = 000000000000000000 */
+     569,    0,    0,    0    /*R_AARCH64_TLSDESC_CALL*/     /* sz = 4, bitsize =  0, dst_mask = 000000000000000000 */
+    1024,    0,    4,    8    /*R_AARCH64_COPY*/             /* sz = 4, bitsize = 64, dst_mask = 0x00000000ffffffff */
+    1025,    0,    4,    8    /*R_AARCH64_GLOB_DAT*/         /* sz = 4, bitsize = 64, dst_mask = 0x00000000ffffffff */
+    1026,    0,    4,    8    /*R_AARCH64_JUMP_SLOT*/        /* sz = 4, bitsize = 64, dst_mask = 0x00000000ffffffff */
+    1027,    0,    0,    8    /*R_AARCH64_RELATIVE*/         /* sz = 4, bitsize = 64, dst_mask = 0xffffffffffffffff */
+    1029,    0,    0,    8    /*R_AARCH64_TLS_DTPMOD64*/     /* sz = 4, bitsize = 64, dst_mask = 0xffffffffffffffff */
+    1028,    0,    0,    8    /*R_AARCH64_TLS_DTPREL64*/     /* sz = 4, bitsize = 64, dst_mask = 0xffffffffffffffff */
+    1030,    0,    0,    8    /*R_AARCH64_TLS_TPREL64*/      /* sz = 4, bitsize = 64, dst_mask = 0xffffffffffffffff */
+    1031,    0,    0,    8    /*R_AARCH64_TLSDESC*/          /* sz = 4, bitsize = 64, dst_mask = 0xffffffffffffffff */
+    1032,    0,    0,    8    /*R_AARCH64_IRELATIVE*/        /* sz = 4, bitsize = 64, dst_mask = 0xffffffffffffffff */
+
+TABLE 21:    /*EM_PPC64*/                  
+       0,    0,    0,    0    /*R_PPC64_NONE*/               /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+       1,    0,    0,    4    /*R_PPC64_ADDR32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       2,    0,    0,    4    /*R_PPC64_ADDR24*/             /* sz = 4, bitsize = 26, dst_mask = 0x0000000003fffffc */
+       3,    0,    0,    2    /*R_PPC64_ADDR16*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       4,    0,    0,    2    /*R_PPC64_ADDR16_LO*/          /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       5,    0,    0,    2    /*R_PPC64_ADDR16_HI*/          /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       6,    0,    0,    2    /*R_PPC64_ADDR16_HA*/          /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       7,    0,    2,    2    /*R_PPC64_ADDR14*/             /* sz = 4, bitsize = 16, dst_mask = 0x000000000000fffc */
+       8,    0,    2,    2    /*R_PPC64_ADDR14_BRTAKEN*/     /* sz = 4, bitsize = 16, dst_mask = 0x000000000000fffc */
+       9,    0,    2,    2    /*R_PPC64_ADDR14_BRNTAKEN*/    /* sz = 4, bitsize = 16, dst_mask = 0x000000000000fffc */
+      10,    0,    0,    4    /*R_PPC64_REL24*/              /* sz = 4, bitsize = 26, dst_mask = 0x0000000003fffffc */
+     116,    0,    0,    4    /*R_PPC64_REL24_NOTOC*/        /* sz = 4, bitsize = 26, dst_mask = 0x0000000003fffffc */
+      11,    0,    2,    2    /*R_PPC64_REL14*/              /* sz = 4, bitsize = 16, dst_mask = 0x000000000000fffc */
+      12,    0,    2,    2    /*R_PPC64_REL14_BRTAKEN*/      /* sz = 4, bitsize = 16, dst_mask = 0x000000000000fffc */
+      13,    0,    2,    2    /*R_PPC64_REL14_BRNTAKEN*/     /* sz = 4, bitsize = 16, dst_mask = 0x000000000000fffc */
+      14,    0,    0,    2    /*R_PPC64_GOT16*/              /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      15,    0,    0,    2    /*R_PPC64_GOT16_LO*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      16,    0,    0,    2    /*R_PPC64_GOT16_HI*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      17,    0,    0,    2    /*R_PPC64_GOT16_HA*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      19,    0,    0,    0    /*R_PPC64_COPY*/               /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      20,    0,    0,    8    /*R_PPC64_GLOB_DAT*/           /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      21,    0,    0,    0    /*R_PPC64_JMP_SLOT*/           /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      22,    0,    0,    8    /*R_PPC64_RELATIVE*/           /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      24,    0,    0,    4    /*R_PPC64_UADDR32*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      25,    0,    0,    2    /*R_PPC64_UADDR16*/            /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      26,    0,    0,    4    /*R_PPC64_REL32*/              /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      27,    0,    0,    4    /*R_PPC64_PLT32*/              /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      28,    0,    0,    4    /*R_PPC64_PLTREL32*/           /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      29,    0,    0,    2    /*R_PPC64_PLT16_LO*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      30,    0,    0,    2    /*R_PPC64_PLT16_HI*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      31,    0,    0,    2    /*R_PPC64_PLT16_HA*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      33,    0,    0,    2    /*R_PPC64_SECTOFF*/            /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      34,    0,    0,    2    /*R_PPC64_SECTOFF_LO*/         /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      35,    0,    0,    2    /*R_PPC64_SECTOFF_HI*/         /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      36,    0,    0,    2    /*R_PPC64_SECTOFF_HA*/         /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      37,    0,    0,    4    /*R_PPC64_ADDR30*/             /* sz = 4, bitsize = 30, dst_mask = 0x00000000fffffffc */
+      38,    0,    0,    8    /*R_PPC64_ADDR64*/             /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      39,    0,    0,    2    /*R_PPC64_ADDR16_HIGHER*/      /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      40,    0,    0,    2    /*R_PPC64_ADDR16_HIGHERA*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      41,    0,    0,    2    /*R_PPC64_ADDR16_HIGHEST*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      42,    0,    0,    2    /*R_PPC64_ADDR16_HIGHESTA*/    /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      43,    0,    0,    8    /*R_PPC64_UADDR64*/            /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      44,    0,    0,    8    /*R_PPC64_REL64*/              /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      45,    0,    0,    8    /*R_PPC64_PLT64*/              /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      46,    0,    0,    8    /*R_PPC64_PLTREL64*/           /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      47,    0,    0,    2    /*R_PPC64_TOC16*/              /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      48,    0,    0,    2    /*R_PPC64_TOC16_LO*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      49,    0,    0,    2    /*R_PPC64_TOC16_HI*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      50,    0,    0,    2    /*R_PPC64_TOC16_HA*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      51,    0,    0,    8    /*R_PPC64_TOC*/                /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      52,    0,    0,    2    /*R_PPC64_PLTGOT16*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      53,    0,    0,    2    /*R_PPC64_PLTGOT16_LO*/        /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      54,    0,    0,    2    /*R_PPC64_PLTGOT16_HI*/        /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      55,    0,    0,    2    /*R_PPC64_PLTGOT16_HA*/        /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      56,    0,    0,    2    /*R_PPC64_ADDR16_DS*/          /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      57,    0,    0,    2    /*R_PPC64_ADDR16_LO_DS*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      58,    0,    0,    2    /*R_PPC64_GOT16_DS*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      59,    0,    0,    2    /*R_PPC64_GOT16_LO_DS*/        /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      60,    0,    0,    2    /*R_PPC64_PLT16_LO_DS*/        /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      61,    0,    0,    2    /*R_PPC64_SECTOFF_DS*/         /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      62,    0,    0,    2    /*R_PPC64_SECTOFF_LO_DS*/      /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      63,    0,    0,    2    /*R_PPC64_TOC16_DS*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      64,    0,    0,    2    /*R_PPC64_TOC16_LO_DS*/        /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      65,    0,    0,    2    /*R_PPC64_PLTGOT16_DS*/        /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      66,    0,    0,    2    /*R_PPC64_PLTGOT16_LO_DS*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      67,    0,    0,    4    /*R_PPC64_TLS*/                /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+     107,    0,    0,    4    /*R_PPC64_TLSGD*/              /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+     108,    0,    0,    4    /*R_PPC64_TLSLD*/              /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+     109,    0,    0,    4    /*R_PPC64_TOCSAVE*/            /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+     119,    0,    0,    4    /*R_PPC64_PLTSEQ*/             /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+     120,    0,    0,    4    /*R_PPC64_PLTCALL*/            /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+      68,    0,    0,    8    /*R_PPC64_DTPMOD64*/           /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      78,    0,    0,    8    /*R_PPC64_DTPREL64*/           /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      74,    0,    0,    2    /*R_PPC64_DTPREL16*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      75,    0,    0,    2    /*R_PPC64_DTPREL16_LO*/        /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      76,    0,    0,    2    /*R_PPC64_DTPREL16_HI*/        /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      77,    0,    0,    2    /*R_PPC64_DTPREL16_HA*/        /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     103,    0,    0,    2    /*R_PPC64_DTPREL16_HIGHER*/    /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     104,    0,    0,    2    /*R_PPC64_DTPREL16_HIGHERA*/   /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     105,    0,    0,    2    /*R_PPC64_DTPREL16_HIGHEST*/   /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     106,    0,    0,    2    /*R_PPC64_DTPREL16_HIGHESTA*/  /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     101,    0,    0,    2    /*R_PPC64_DTPREL16_DS*/        /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+     102,    0,    0,    2    /*R_PPC64_DTPREL16_LO_DS*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      73,    0,    0,    8    /*R_PPC64_TPREL64*/            /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      69,    0,    0,    2    /*R_PPC64_TPREL16*/            /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      70,    0,    0,    2    /*R_PPC64_TPREL16_LO*/         /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      71,    0,    0,    2    /*R_PPC64_TPREL16_HI*/         /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      72,    0,    0,    2    /*R_PPC64_TPREL16_HA*/         /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      97,    0,    0,    2    /*R_PPC64_TPREL16_HIGHER*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      98,    0,    0,    2    /*R_PPC64_TPREL16_HIGHERA*/    /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      99,    0,    0,    2    /*R_PPC64_TPREL16_HIGHEST*/    /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     100,    0,    0,    2    /*R_PPC64_TPREL16_HIGHESTA*/   /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      95,    0,    0,    2    /*R_PPC64_TPREL16_DS*/         /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      96,    0,    0,    2    /*R_PPC64_TPREL16_LO_DS*/      /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      79,    0,    0,    2    /*R_PPC64_GOT_TLSGD16*/        /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      80,    0,    0,    2    /*R_PPC64_GOT_TLSGD16_LO*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      81,    0,    0,    2    /*R_PPC64_GOT_TLSGD16_HI*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      82,    0,    0,    2    /*R_PPC64_GOT_TLSGD16_HA*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      83,    0,    0,    2    /*R_PPC64_GOT_TLSLD16*/        /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      84,    0,    0,    2    /*R_PPC64_GOT_TLSLD16_LO*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      85,    0,    0,    2    /*R_PPC64_GOT_TLSLD16_HI*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      86,    0,    0,    2    /*R_PPC64_GOT_TLSLD16_HA*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      91,    0,    0,    2    /*R_PPC64_GOT_DTPREL16_DS*/    /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      92,    0,    0,    2    /*R_PPC64_GOT_DTPREL16_LO_DS*/ /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      93,    0,    0,    2    /*R_PPC64_GOT_DTPREL16_HI*/    /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      94,    0,    0,    2    /*R_PPC64_GOT_DTPREL16_HA*/    /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      87,    0,    0,    2    /*R_PPC64_GOT_TPREL16_DS*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      88,    0,    0,    2    /*R_PPC64_GOT_TPREL16_LO_DS*/  /* sz = 2, bitsize = 16, dst_mask = 0x000000000000fffc */
+      89,    0,    0,    2    /*R_PPC64_GOT_TPREL16_HI*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      90,    0,    0,    2    /*R_PPC64_GOT_TPREL16_HA*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     249,    0,    0,    2    /*R_PPC64_REL16*/              /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     250,    0,    0,    2    /*R_PPC64_REL16_LO*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     251,    0,    0,    2    /*R_PPC64_REL16_HI*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     252,    0,    0,    2    /*R_PPC64_REL16_HA*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     110,    0,    0,    2    /*R_PPC64_ADDR16_HIGH*/        /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     111,    0,    0,    2    /*R_PPC64_ADDR16_HIGHA*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     114,    0,    0,    2    /*R_PPC64_DTPREL16_HIGH*/      /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     115,    0,    0,    2    /*R_PPC64_DTPREL16_HIGHA*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     112,    0,    0,    2    /*R_PPC64_TPREL16_HIGH*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     113,    0,    0,    2    /*R_PPC64_TPREL16_HIGHA*/      /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     118,    0,    0,    4    /*R_PPC64_ENTRY*/              /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+     117,    0,    0,    8    /*R_PPC64_ADDR64_LOCAL*/       /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+     121,    0,    0,    4    /*R_PPC64_PLTSEQ_NOTOC*/       /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+     122,    0,    0,    4    /*R_PPC64_PLTCALL_NOTOC*/      /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+     123,    0,    0,    4    /*R_PPC64_PCREL_OPT*/          /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+     128,    0,    1,    7    /*R_PPC64_D34*/                /* sz = 8, bitsize = 34, dst_mask = 0x0003ffff0000ffff */
+     129,    0,    1,    7    /*R_PPC64_D34_LO*/             /* sz = 8, bitsize = 34, dst_mask = 0x0003ffff0000ffff */
+     130,    0,    1,    7    /*R_PPC64_D34_HI30*/           /* sz = 8, bitsize = 34, dst_mask = 0x0003ffff0000ffff */
+     131,    0,    1,    7    /*R_PPC64_D34_HA30*/           /* sz = 8, bitsize = 34, dst_mask = 0x0003ffff0000ffff */
+     132,    0,    1,    7    /*R_PPC64_PCREL34*/            /* sz = 8, bitsize = 34, dst_mask = 0x0003ffff0000ffff */
+     133,    0,    1,    7    /*R_PPC64_GOT_PCREL34*/        /* sz = 8, bitsize = 34, dst_mask = 0x0003ffff0000ffff */
+     134,    0,    1,    7    /*R_PPC64_PLT_PCREL34*/        /* sz = 8, bitsize = 34, dst_mask = 0x0003ffff0000ffff */
+     135,    0,    1,    7    /*R_PPC64_PLT_PCREL34_NOTOC*/  /* sz = 8, bitsize = 34, dst_mask = 0x0003ffff0000ffff */
+     146,    0,    1,    7    /*R_PPC64_TPREL34*/            /* sz = 8, bitsize = 34, dst_mask = 0x0003ffff0000ffff */
+     147,    0,    1,    7    /*R_PPC64_DTPREL34*/           /* sz = 8, bitsize = 34, dst_mask = 0x0003ffff0000ffff */
+     148,    0,    1,    7    /*R_PPC64_GOT_TLSGD_PCREL34*/  /* sz = 8, bitsize = 34, dst_mask = 0x0003ffff0000ffff */
+     149,    0,    1,    7    /*R_PPC64_GOT_TLSLD_PCREL34*/  /* sz = 8, bitsize = 34, dst_mask = 0x0003ffff0000ffff */
+     150,    0,    1,    7    /*R_PPC64_GOT_TPREL_PCREL34*/  /* sz = 8, bitsize = 34, dst_mask = 0x0003ffff0000ffff */
+     151,    0,    1,    7    /*R_PPC64_GOT_DTPREL_PCREL34*/ /* sz = 8, bitsize = 34, dst_mask = 0x0003ffff0000ffff */
+     136,    0,    0,    2    /*R_PPC64_ADDR16_HIGHER34*/    /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     137,    0,    0,    2    /*R_PPC64_ADDR16_HIGHERA34*/   /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     138,    0,    0,    2    /*R_PPC64_ADDR16_HIGHEST34*/   /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     139,    0,    0,    2    /*R_PPC64_ADDR16_HIGHESTA34*/  /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     140,    0,    0,    2    /*R_PPC64_REL16_HIGHER34*/     /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     141,    0,    0,    2    /*R_PPC64_REL16_HIGHERA34*/    /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     142,    0,    0,    2    /*R_PPC64_REL16_HIGHEST34*/    /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     143,    0,    0,    2    /*R_PPC64_REL16_HIGHESTA34*/   /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     144,    0,    2,    6    /*R_PPC64_D28*/                /* sz = 8, bitsize = 28, dst_mask = 0x00000fff0000ffff */
+     145,    0,    2,    6    /*R_PPC64_PCREL28*/            /* sz = 8, bitsize = 28, dst_mask = 0x00000fff0000ffff */
+
+TABLE 20:    /*EM_PPC*/                    
+       0,    0,    0,    0    /*R_PPC_NONE*/                 /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+       1,    0,    0,    4    /*R_PPC_ADDR32*/               /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       2,    0,    0,    4    /*R_PPC_ADDR24*/               /* sz = 4, bitsize = 26, dst_mask = 0x0000000003fffffc */
+       3,    0,    0,    2    /*R_PPC_ADDR16*/               /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       4,    0,    0,    2    /*R_PPC_ADDR16_LO*/            /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       5,    0,    0,    2    /*R_PPC_ADDR16_HI*/            /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       6,    0,    0,    2    /*R_PPC_ADDR16_HA*/            /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       7,    0,    2,    2    /*R_PPC_ADDR14*/               /* sz = 4, bitsize = 16, dst_mask = 0x000000000000fffc */
+       8,    0,    2,    2    /*R_PPC_ADDR14_BRTAKEN*/       /* sz = 4, bitsize = 16, dst_mask = 0x000000000000fffc */
+       9,    0,    2,    2    /*R_PPC_ADDR14_BRNTAKEN*/      /* sz = 4, bitsize = 16, dst_mask = 0x000000000000fffc */
+      10,    0,    0,    4    /*R_PPC_REL24*/                /* sz = 4, bitsize = 26, dst_mask = 0x0000000003fffffc */
+      11,    0,    2,    2    /*R_PPC_REL14*/                /* sz = 4, bitsize = 16, dst_mask = 0x000000000000fffc */
+      12,    0,    2,    2    /*R_PPC_REL14_BRTAKEN*/        /* sz = 4, bitsize = 16, dst_mask = 0x000000000000fffc */
+      13,    0,    2,    2    /*R_PPC_REL14_BRNTAKEN*/       /* sz = 4, bitsize = 16, dst_mask = 0x000000000000fffc */
+      14,    0,    0,    2    /*R_PPC_GOT16*/                /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      15,    0,    0,    2    /*R_PPC_GOT16_LO*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      16,    0,    0,    2    /*R_PPC_GOT16_HI*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      17,    0,    0,    2    /*R_PPC_GOT16_HA*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      18,    0,    0,    4    /*R_PPC_PLTREL24*/             /* sz = 4, bitsize = 26, dst_mask = 0x0000000003fffffc */
+      19,    0,    0,    4    /*R_PPC_COPY*/                 /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+      20,    0,    0,    4    /*R_PPC_GLOB_DAT*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      21,    0,    0,    4    /*R_PPC_JMP_SLOT*/             /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+      22,    0,    0,    4    /*R_PPC_RELATIVE*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      23,    0,    0,    4    /*R_PPC_LOCAL24PC*/            /* sz = 4, bitsize = 26, dst_mask = 0x0000000003fffffc */
+      24,    0,    0,    4    /*R_PPC_UADDR32*/              /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      25,    0,    0,    2    /*R_PPC_UADDR16*/              /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      26,    0,    0,    4    /*R_PPC_REL32*/                /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      27,    0,    0,    4    /*R_PPC_PLT32*/                /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+      28,    0,    0,    4    /*R_PPC_PLTREL32*/             /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+      29,    0,    0,    2    /*R_PPC_PLT16_LO*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      30,    0,    0,    2    /*R_PPC_PLT16_HI*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      31,    0,    0,    2    /*R_PPC_PLT16_HA*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      32,    0,    0,    2    /*R_PPC_SDAREL16*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      33,    0,    0,    2    /*R_PPC_SECTOFF*/              /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      34,    0,    0,    2    /*R_PPC_SECTOFF_LO*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      35,    0,    0,    2    /*R_PPC_SECTOFF_HI*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      36,    0,    0,    2    /*R_PPC_SECTOFF_HA*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      67,    0,    0,    4    /*R_PPC_TLS*/                  /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+      95,    0,    0,    4    /*R_PPC_TLSGD*/                /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+      96,    0,    0,    4    /*R_PPC_TLSLD*/                /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+     121,    0,    0,    4    /*R_PPC_EMB_RELOC_121*/        /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+      68,    0,    0,    4    /*R_PPC_DTPMOD32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      78,    0,    0,    4    /*R_PPC_DTPREL32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      74,    0,    0,    2    /*R_PPC_DTPREL16*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      75,    0,    0,    2    /*R_PPC_DTPREL16_LO*/          /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      76,    0,    0,    2    /*R_PPC_DTPREL16_HI*/          /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      77,    0,    0,    2    /*R_PPC_DTPREL16_HA*/          /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      73,    0,    0,    4    /*R_PPC_TPREL32*/              /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      69,    0,    0,    2    /*R_PPC_TPREL16*/              /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      70,    0,    0,    2    /*R_PPC_TPREL16_LO*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      71,    0,    0,    2    /*R_PPC_TPREL16_HI*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      72,    0,    0,    2    /*R_PPC_TPREL16_HA*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      79,    0,    0,    2    /*R_PPC_GOT_TLSGD16*/          /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      80,    0,    0,    2    /*R_PPC_GOT_TLSGD16_LO*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      81,    0,    0,    2    /*R_PPC_GOT_TLSGD16_HI*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      82,    0,    0,    2    /*R_PPC_GOT_TLSGD16_HA*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      83,    0,    0,    2    /*R_PPC_GOT_TLSLD16*/          /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      84,    0,    0,    2    /*R_PPC_GOT_TLSLD16_LO*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      85,    0,    0,    2    /*R_PPC_GOT_TLSLD16_HI*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      86,    0,    0,    2    /*R_PPC_GOT_TLSLD16_HA*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      91,    0,    0,    2    /*R_PPC_GOT_DTPREL16*/         /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      92,    0,    0,    2    /*R_PPC_GOT_DTPREL16_LO*/      /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      93,    0,    0,    2    /*R_PPC_GOT_DTPREL16_HI*/      /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      94,    0,    0,    2    /*R_PPC_GOT_DTPREL16_HA*/      /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      87,    0,    0,    2    /*R_PPC_GOT_TPREL16*/          /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      88,    0,    0,    2    /*R_PPC_GOT_TPREL16_LO*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      89,    0,    0,    2    /*R_PPC_GOT_TPREL16_HI*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      90,    0,    0,    2    /*R_PPC_GOT_TPREL16_HA*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     101,    0,    0,    4    /*R_PPC_EMB_NADDR32*/          /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     102,    0,    0,    2    /*R_PPC_EMB_NADDR16*/          /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     103,    0,    0,    2    /*R_PPC_EMB_NADDR16_LO*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     104,    0,    0,    2    /*R_PPC_EMB_NADDR16_HI*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     105,    0,    0,    2    /*R_PPC_EMB_NADDR16_HA*/       /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     106,    0,    0,    2    /*R_PPC_EMB_SDA_I16*/          /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     107,    0,    0,    2    /*R_PPC_EMB_SDA2_I16*/         /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     108,    0,    0,    2    /*R_PPC_EMB_SDA2REL*/          /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     109,    0,    2,    2    /*R_PPC_EMB_SDA21*/            /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     116,    0,    0,    2    /*R_PPC_EMB_RELSDA*/           /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     216,    0,    1,    1    /*R_PPC_VLE_REL8*/             /* sz = 2, bitsize =  8, dst_mask = 0x00000000000000ff */
+     217,    0,    2,    2    /*R_PPC_VLE_REL15*/            /* sz = 4, bitsize = 16, dst_mask = 0x000000000000fffe */
+     218,    0,    0,    4    /*R_PPC_VLE_REL24*/            /* sz = 4, bitsize = 25, dst_mask = 0x0000000001fffffe */
+     219,    0,    1,    3    /*R_PPC_VLE_LO16A*/            /* sz = 4, bitsize = 16, dst_mask = 0x00000000001f07ff */
+     220,    0,    0,    4    /*R_PPC_VLE_LO16D*/            /* sz = 4, bitsize = 16, dst_mask = 0x0000000003e007ff */
+     221,    0,    1,    3    /*R_PPC_VLE_HI16A*/            /* sz = 4, bitsize = 16, dst_mask = 0x00000000001f07ff */
+     222,    0,    0,    4    /*R_PPC_VLE_HI16D*/            /* sz = 4, bitsize = 16, dst_mask = 0x0000000003e007ff */
+     223,    0,    1,    3    /*R_PPC_VLE_HA16A*/            /* sz = 4, bitsize = 16, dst_mask = 0x00000000001f07ff */
+     224,    0,    0,    4    /*R_PPC_VLE_HA16D*/            /* sz = 4, bitsize = 16, dst_mask = 0x0000000003e007ff */
+     225,    0,    2,    2    /*R_PPC_VLE_SDA21*/            /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     226,    0,    2,    2    /*R_PPC_VLE_SDA21_LO*/         /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+     227,    0,    1,    3    /*R_PPC_VLE_SDAREL_LO16A*/     /* sz = 4, bitsize = 16, dst_mask = 0x00000000001f07ff */
+     228,    0,    0,    4    /*R_PPC_VLE_SDAREL_LO16D*/     /* sz = 4, bitsize = 16, dst_mask = 0x0000000003e007ff */
+     229,    0,    1,    3    /*R_PPC_VLE_SDAREL_HI16A*/     /* sz = 4, bitsize = 16, dst_mask = 0x00000000001f07ff */
+     230,    0,    0,    4    /*R_PPC_VLE_SDAREL_HI16D*/     /* sz = 4, bitsize = 16, dst_mask = 0x0000000003e007ff */
+     231,    0,    1,    3    /*R_PPC_VLE_SDAREL_HA16A*/     /* sz = 4, bitsize = 16, dst_mask = 0x00000000001f07ff */
+     232,    0,    0,    4    /*R_PPC_VLE_SDAREL_HA16D*/     /* sz = 4, bitsize = 16, dst_mask = 0x0000000003e007ff */
+     248,    0,    0,    4    /*R_PPC_IRELATIVE*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     249,    0,    0,    2    /*R_PPC_REL16*/                /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     250,    0,    0,    2    /*R_PPC_REL16_LO*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     251,    0,    0,    2    /*R_PPC_REL16_HI*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     252,    0,    0,    2    /*R_PPC_REL16_HA*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+     246,    0,    1,    3    /*R_PPC_REL16DX_HA*/           /* sz = 4, bitsize = 16, dst_mask = 0x00000000001fffc1 */
+     253,    0,    0,    0    /*R_PPC_GNU_VTINHERIT*/        /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+     254,    0,    0,    0    /*R_PPC_GNU_VTENTRY*/          /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+     255,    0,    0,    2    /*R_PPC_TOC16*/                /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+
+TABLE 243:    /*EM_RISCV*/                  
+       0,    0,    0,    0    /*R_RISCV_NONE*/               /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+       1,    0,    0,    4    /*R_RISCV_32*/                 /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       2,    0,    0,    8    /*R_RISCV_64*/                 /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+       3,    0,    0,    4    /*R_RISCV_RELATIVE*/           /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       4,    0,    0,    0    /*R_RISCV_COPY*/               /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+       5,    0,    0,    8    /*R_RISCV_JUMP_SLOT*/          /* sz = 8, bitsize = 64, dst_mask = 000000000000000000 */
+       6,    0,    0,    4    /*R_RISCV_TLS_DTPMOD32*/       /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       7,    0,    0,    8    /*R_RISCV_TLS_DTPMOD64*/       /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+       8,    0,    0,    4    /*R_RISCV_TLS_DTPREL32*/       /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       9,    0,    0,    8    /*R_RISCV_TLS_DTPREL64*/       /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      10,    0,    0,    4    /*R_RISCV_TLS_TPREL32*/        /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      11,    0,    0,    8    /*R_RISCV_TLS_TPREL64*/        /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      16,    0,    0,    4    /*R_RISCV_BRANCH*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000fe000f80 */
+      17,    1,    0,    3    /*R_RISCV_JAL*/                /* sz = 4, bitsize = 32, dst_mask = 0x00000000fffff000 */
+      18,    1,    0,    7    /*R_RISCV_CALL*/               /* sz = 8, bitsize = 64, dst_mask = 0xfff00000fffff000 */
+      19,    1,    0,    7    /*R_RISCV_CALL_PLT*/           /* sz = 8, bitsize = 64, dst_mask = 0xfff00000fffff000 */
+      20,    1,    0,    3    /*R_RISCV_GOT_HI20*/           /* sz = 4, bitsize = 32, dst_mask = 0x00000000fffff000 */
+      21,    1,    0,    3    /*R_RISCV_TLS_GOT_HI20*/       /* sz = 4, bitsize = 32, dst_mask = 0x00000000fffff000 */
+      22,    1,    0,    3    /*R_RISCV_TLS_GD_HI20*/        /* sz = 4, bitsize = 32, dst_mask = 0x00000000fffff000 */
+      23,    1,    0,    3    /*R_RISCV_PCREL_HI20*/         /* sz = 4, bitsize = 32, dst_mask = 0x00000000fffff000 */
+      24,    0,    2,    2    /*R_RISCV_PCREL_LO12_I*/       /* sz = 4, bitsize = 32, dst_mask = 0x00000000fff00000 */
+      25,    0,    0,    4    /*R_RISCV_PCREL_LO12_S*/       /* sz = 4, bitsize = 32, dst_mask = 0x00000000fe000f80 */
+      26,    1,    0,    3    /*R_RISCV_HI20*/               /* sz = 4, bitsize = 32, dst_mask = 0x00000000fffff000 */
+      27,    0,    2,    2    /*R_RISCV_LO12_I*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000fff00000 */
+      28,    0,    0,    4    /*R_RISCV_LO12_S*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000fe000f80 */
+      29,    1,    0,    3    /*R_RISCV_TPREL_HI20*/         /* sz = 4, bitsize = 32, dst_mask = 0x00000000fffff000 */
+      30,    0,    2,    2    /*R_RISCV_TPREL_LO12_I*/       /* sz = 4, bitsize = 32, dst_mask = 0x00000000fff00000 */
+      31,    0,    0,    4    /*R_RISCV_TPREL_LO12_S*/       /* sz = 4, bitsize = 32, dst_mask = 0x00000000fe000f80 */
+      32,    0,    0,    0    /*R_RISCV_TPREL_ADD*/          /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      33,    0,    0,    1    /*R_RISCV_ADD8*/               /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+      34,    0,    0,    2    /*R_RISCV_ADD16*/              /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      35,    0,    0,    4    /*R_RISCV_ADD32*/              /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      36,    0,    0,    8    /*R_RISCV_ADD64*/              /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      37,    0,    0,    1    /*R_RISCV_SUB8*/               /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+      38,    0,    0,    2    /*R_RISCV_SUB16*/              /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      39,    0,    0,    4    /*R_RISCV_SUB32*/              /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      40,    0,    0,    8    /*R_RISCV_SUB64*/              /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      43,    0,    0,    0    /*R_RISCV_ALIGN*/              /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      44,    0,    0,    2    /*R_RISCV_RVC_BRANCH*/         /* sz = 2, bitsize = 16, dst_mask = 0x0000000000001c7c */
+      45,    0,    0,    2    /*R_RISCV_RVC_JUMP*/           /* sz = 2, bitsize = 16, dst_mask = 0x0000000000001ffc */
+      51,    0,    0,    0    /*R_RISCV_RELAX*/              /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      52,    0,    0,    1    /*R_RISCV_SUB6*/               /* sz = 1, bitsize =  8, dst_mask = 0x000000000000003f */
+      53,    0,    0,    1    /*R_RISCV_SET6*/               /* sz = 1, bitsize =  8, dst_mask = 0x000000000000003f */
+      54,    0,    0,    1    /*R_RISCV_SET8*/               /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+      55,    0,    0,    2    /*R_RISCV_SET16*/              /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      56,    0,    0,    4    /*R_RISCV_SET32*/              /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      57,    0,    0,    4    /*R_RISCV_32_PCREL*/           /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      58,    0,    0,    4    /*R_RISCV_IRELATIVE*/          /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      60,    0,    0,    0    /*R_RISCV_SET_ULEB128*/        /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      61,    0,    0,    0    /*R_RISCV_SUB_ULEB128*/        /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      46,    0,    0,    2    /*R_RISCV_RVC_LUI*/            /* sz = 2, bitsize = 16, dst_mask = 0x000000000000107c */
+      47,    0,    2,    2    /*R_RISCV_GPREL_I*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000fff00000 */
+      48,    0,    0,    4    /*R_RISCV_GPREL_S*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000fe000f80 */
+      49,    0,    2,    2    /*R_RISCV_TPREL_I*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000fff00000 */
+      50,    0,    0,    4    /*R_RISCV_TPREL_S*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000fe000f80 */
+
+TABLE 2:    /*EM_SPARC*/                  
+       0,    0,    0,    0    /*R_SPARC_NONE*/               /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+       1,    0,    0,    1    /*R_SPARC_8*/                  /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+       2,    0,    0,    2    /*R_SPARC_16*/                 /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       3,    0,    0,    4    /*R_SPARC_32*/                 /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       4,    0,    0,    1    /*R_SPARC_DISP8*/              /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+       5,    0,    0,    2    /*R_SPARC_DISP16*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       6,    0,    0,    4    /*R_SPARC_DISP32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       7,    0,    0,    4    /*R_SPARC_WDISP30*/            /* sz = 4, bitsize = 30, dst_mask = 0x000000003fffffff */
+       8,    0,    1,    3    /*R_SPARC_WDISP22*/            /* sz = 4, bitsize = 22, dst_mask = 0x00000000003fffff */
+       9,    0,    1,    3    /*R_SPARC_HI22*/               /* sz = 4, bitsize = 22, dst_mask = 0x00000000003fffff */
+      10,    0,    1,    3    /*R_SPARC_22*/                 /* sz = 4, bitsize = 22, dst_mask = 0x00000000003fffff */
+      11,    0,    2,    2    /*R_SPARC_13*/                 /* sz = 4, bitsize = 13, dst_mask = 0x0000000000001fff */
+      12,    0,    2,    2    /*R_SPARC_LO10*/               /* sz = 4, bitsize = 10, dst_mask = 0x00000000000003ff */
+      13,    0,    2,    2    /*R_SPARC_GOT10*/              /* sz = 4, bitsize = 10, dst_mask = 0x00000000000003ff */
+      14,    0,    2,    2    /*R_SPARC_GOT13*/              /* sz = 4, bitsize = 13, dst_mask = 0x0000000000001fff */
+      15,    0,    1,    3    /*R_SPARC_GOT22*/              /* sz = 4, bitsize = 22, dst_mask = 0x00000000003fffff */
+      16,    0,    2,    2    /*R_SPARC_PC10*/               /* sz = 4, bitsize = 10, dst_mask = 0x00000000000003ff */
+      17,    0,    1,    3    /*R_SPARC_PC22*/               /* sz = 4, bitsize = 22, dst_mask = 0x00000000003fffff */
+      18,    0,    0,    4    /*R_SPARC_WPLT30*/             /* sz = 4, bitsize = 30, dst_mask = 0x000000003fffffff */
+      19,    0,    0,    0    /*R_SPARC_COPY*/               /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      20,    0,    0,    0    /*R_SPARC_GLOB_DAT*/           /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      21,    0,    0,    0    /*R_SPARC_JMP_SLOT*/           /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      22,    0,    0,    0    /*R_SPARC_RELATIVE*/           /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      23,    0,    0,    4    /*R_SPARC_UA32*/               /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      24,    0,    0,    4    /*R_SPARC_PLT32*/              /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      25,    0,    0,    0    /*R_SPARC_HIPLT22*/            /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      26,    0,    0,    0    /*R_SPARC_LOPLT10*/            /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      27,    0,    0,    0    /*R_SPARC_PCPLT32*/            /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      28,    0,    0,    0    /*R_SPARC_PCPLT22*/            /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      29,    0,    0,    0    /*R_SPARC_PCPLT10*/            /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      30,    0,    2,    2    /*R_SPARC_10*/                 /* sz = 4, bitsize = 10, dst_mask = 0x00000000000003ff */
+      31,    0,    2,    2    /*R_SPARC_11*/                 /* sz = 4, bitsize = 11, dst_mask = 0x00000000000007ff */
+      32,    0,    0,    8    /*R_SPARC_64*/                 /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      33,    0,    2,    2    /*R_SPARC_OLO10*/              /* sz = 4, bitsize = 13, dst_mask = 0x0000000000001fff */
+      34,    0,    1,    3    /*R_SPARC_HH22*/               /* sz = 4, bitsize = 22, dst_mask = 0x00000000003fffff */
+      35,    0,    2,    2    /*R_SPARC_HM10*/               /* sz = 4, bitsize = 10, dst_mask = 0x00000000000003ff */
+      36,    0,    1,    3    /*R_SPARC_LM22*/               /* sz = 4, bitsize = 22, dst_mask = 0x00000000003fffff */
+      37,    0,    1,    3    /*R_SPARC_PC_HH22*/            /* sz = 4, bitsize = 22, dst_mask = 0x00000000003fffff */
+      38,    0,    2,    2    /*R_SPARC_PC_HM10*/            /* sz = 4, bitsize = 10, dst_mask = 0x00000000000003ff */
+      39,    0,    1,    3    /*R_SPARC_PC_LM22*/            /* sz = 4, bitsize = 22, dst_mask = 0x00000000003fffff */
+      40,    0,    0,    0    /*R_SPARC_WDISP16*/            /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+      41,    0,    1,    3    /*R_SPARC_WDISP19*/            /* sz = 4, bitsize = 19, dst_mask = 0x000000000007ffff */
+      43,    0,    3,    1    /*R_SPARC_7*/                  /* sz = 4, bitsize =  7, dst_mask = 0x000000000000007f */
+      44,    0,    3,    1    /*R_SPARC_5*/                  /* sz = 4, bitsize =  5, dst_mask = 0x000000000000001f */
+      45,    0,    3,    1    /*R_SPARC_6*/                  /* sz = 4, bitsize =  6, dst_mask = 0x000000000000003f */
+      46,    0,    0,    8    /*R_SPARC_DISP64*/             /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      47,    0,    0,    8    /*R_SPARC_PLT64*/              /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      50,    0,    1,    3    /*R_SPARC_H44*/                /* sz = 4, bitsize = 22, dst_mask = 0x00000000003fffff */
+      51,    0,    2,    2    /*R_SPARC_M44*/                /* sz = 4, bitsize = 10, dst_mask = 0x00000000000003ff */
+      52,    0,    2,    2    /*R_SPARC_L44*/                /* sz = 4, bitsize = 13, dst_mask = 0x0000000000000fff */
+      54,    0,    0,    8    /*R_SPARC_UA64*/               /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      55,    0,    0,    2    /*R_SPARC_UA16*/               /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      56,    0,    1,    3    /*R_SPARC_TLS_GD_HI22*/        /* sz = 4, bitsize = 22, dst_mask = 0x00000000003fffff */
+      57,    0,    2,    2    /*R_SPARC_TLS_GD_LO10*/        /* sz = 4, bitsize = 10, dst_mask = 0x00000000000003ff */
+      58,    0,    0,    0    /*R_SPARC_TLS_GD_ADD*/         /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      59,    0,    0,    4    /*R_SPARC_TLS_GD_CALL*/        /* sz = 4, bitsize = 30, dst_mask = 0x000000003fffffff */
+      60,    0,    1,    3    /*R_SPARC_TLS_LDM_HI22*/       /* sz = 4, bitsize = 22, dst_mask = 0x00000000003fffff */
+      61,    0,    2,    2    /*R_SPARC_TLS_LDM_LO10*/       /* sz = 4, bitsize = 10, dst_mask = 0x00000000000003ff */
+      62,    0,    0,    0    /*R_SPARC_TLS_LDM_ADD*/        /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      63,    0,    0,    4    /*R_SPARC_TLS_LDM_CALL*/       /* sz = 4, bitsize = 30, dst_mask = 0x000000003fffffff */
+      66,    0,    0,    0    /*R_SPARC_TLS_LDO_ADD*/        /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      67,    0,    1,    3    /*R_SPARC_TLS_IE_HI22*/        /* sz = 4, bitsize = 22, dst_mask = 0x00000000003fffff */
+      68,    0,    2,    2    /*R_SPARC_TLS_IE_LO10*/        /* sz = 4, bitsize = 10, dst_mask = 0x00000000000003ff */
+      69,    0,    0,    0    /*R_SPARC_TLS_IE_LD*/          /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      70,    0,    0,    0    /*R_SPARC_TLS_IE_LDX*/         /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      71,    0,    0,    0    /*R_SPARC_TLS_IE_ADD*/         /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      74,    0,    0,    0    /*R_SPARC_TLS_DTPMOD32*/       /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      75,    0,    0,    0    /*R_SPARC_TLS_DTPMOD64*/       /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      76,    0,    0,    4    /*R_SPARC_TLS_DTPOFF32*/       /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      77,    0,    0,    8    /*R_SPARC_TLS_DTPOFF64*/       /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+      78,    0,    0,    0    /*R_SPARC_TLS_TPOFF32*/        /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      79,    0,    0,    0    /*R_SPARC_TLS_TPOFF64*/        /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      84,    0,    0,    0    /*R_SPARC_GOTDATA_OP*/         /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      85,    0,    1,    3    /*R_SPARC_H34*/                /* sz = 4, bitsize = 22, dst_mask = 0x00000000003fffff */
+      86,    0,    0,    4    /*R_SPARC_SIZE32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      87,    0,    0,    8    /*R_SPARC_SIZE64*/             /* sz = 8, bitsize = 64, dst_mask = 0xffffffffffffffff */
+
+TABLE 4:    /*EM_68K*/                    
+       0,    0,    0,    0    /*R_68K_NONE*/                 /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+       1,    0,    0,    4    /*R_68K_32*/                   /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       2,    0,    0,    2    /*R_68K_16*/                   /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       3,    0,    0,    1    /*R_68K_8*/                    /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+       4,    0,    0,    4    /*R_68K_PC32*/                 /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       5,    0,    0,    2    /*R_68K_PC16*/                 /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       6,    0,    0,    1    /*R_68K_PC8*/                  /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+       7,    0,    0,    4    /*R_68K_GOT32*/                /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       8,    0,    0,    2    /*R_68K_GOT16*/                /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       9,    0,    0,    1    /*R_68K_GOT8*/                 /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+      10,    0,    0,    4    /*R_68K_GOT32O*/               /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      11,    0,    0,    2    /*R_68K_GOT16O*/               /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      12,    0,    0,    1    /*R_68K_GOT8O*/                /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+      13,    0,    0,    4    /*R_68K_PLT32*/                /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      14,    0,    0,    2    /*R_68K_PLT16*/                /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      15,    0,    0,    1    /*R_68K_PLT8*/                 /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+      16,    0,    0,    4    /*R_68K_PLT32O*/               /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      17,    0,    0,    2    /*R_68K_PLT16O*/               /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      18,    0,    0,    1    /*R_68K_PLT8O*/                /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+      19,    0,    0,    4    /*R_68K_COPY*/                 /* sz = 0, bitsize =  0, dst_mask = 0x00000000ffffffff */
+      20,    0,    0,    4    /*R_68K_GLOB_DAT*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      21,    0,    0,    4    /*R_68K_JMP_SLOT*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      22,    0,    0,    4    /*R_68K_RELATIVE*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      23,    0,    0,    0    /*R_68K_GNU_VTINHERIT*/        /* sz = 4, bitsize =  0, dst_mask = 000000000000000000 */
+      24,    0,    0,    0    /*R_68K_GNU_VTENTRY*/          /* sz = 4, bitsize =  0, dst_mask = 000000000000000000 */
+      25,    0,    0,    4    /*R_68K_TLS_GD32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      26,    0,    0,    2    /*R_68K_TLS_GD16*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      27,    0,    0,    1    /*R_68K_TLS_GD8*/              /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+      28,    0,    0,    4    /*R_68K_TLS_LDM32*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      29,    0,    0,    2    /*R_68K_TLS_LDM16*/            /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      30,    0,    0,    1    /*R_68K_TLS_LDM8*/             /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+      31,    0,    0,    4    /*R_68K_TLS_LDO32*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      32,    0,    0,    2    /*R_68K_TLS_LDO16*/            /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      33,    0,    0,    1    /*R_68K_TLS_LDO8*/             /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+      34,    0,    0,    4    /*R_68K_TLS_IE32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      35,    0,    0,    2    /*R_68K_TLS_IE16*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      36,    0,    0,    1    /*R_68K_TLS_IE8*/              /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+      37,    0,    0,    4    /*R_68K_TLS_LE32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      38,    0,    0,    2    /*R_68K_TLS_LE16*/             /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+      39,    0,    0,    1    /*R_68K_TLS_LE8*/              /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+      40,    0,    0,    4    /*R_68K_TLS_DTPMOD32*/         /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      41,    0,    0,    4    /*R_68K_TLS_DTPREL32*/         /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      42,    0,    0,    4    /*R_68K_TLS_TPREL32*/          /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+
+TABLE 15:    /*EM_PARISC*/                 
+       0,    0,    0,    0    /*R_PARISC_NONE*/              /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+       1,    0,    0,    4    /*R_PARISC_DIR32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       2,    0,    1,    3    /*R_PARISC_DIR21L*/            /* sz = 4, bitsize = 21, dst_mask = 000000000000000000 */
+       3,    0,    1,    3    /*R_PARISC_DIR17R*/            /* sz = 4, bitsize = 17, dst_mask = 000000000000000000 */
+       4,    0,    1,    3    /*R_PARISC_DIR17F*/            /* sz = 4, bitsize = 17, dst_mask = 000000000000000000 */
+       6,    0,    2,    2    /*R_PARISC_DIR14R*/            /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+       7,    0,    2,    2    /*R_PARISC_DIR14F*/            /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+       8,    0,    2,    2    /*R_PARISC_PCREL12F*/          /* sz = 4, bitsize = 12, dst_mask = 000000000000000000 */
+       9,    0,    0,    4    /*R_PARISC_PCREL32*/           /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+      10,    0,    1,    3    /*R_PARISC_PCREL21L*/          /* sz = 4, bitsize = 21, dst_mask = 000000000000000000 */
+      11,    0,    1,    3    /*R_PARISC_PCREL17R*/          /* sz = 4, bitsize = 17, dst_mask = 000000000000000000 */
+      12,    0,    1,    3    /*R_PARISC_PCREL17F*/          /* sz = 4, bitsize = 17, dst_mask = 000000000000000000 */
+      13,    0,    1,    3    /*R_PARISC_PCREL17C*/          /* sz = 4, bitsize = 17, dst_mask = 000000000000000000 */
+      14,    0,    2,    2    /*R_PARISC_PCREL14R*/          /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      15,    0,    2,    2    /*R_PARISC_PCREL14F*/          /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      18,    0,    1,    3    /*R_PARISC_DPREL21L*/          /* sz = 4, bitsize = 21, dst_mask = 000000000000000000 */
+      19,    0,    2,    2    /*R_PARISC_DPREL14WR*/         /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      20,    0,    2,    2    /*R_PARISC_DPREL14DR*/         /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      22,    0,    2,    2    /*R_PARISC_DPREL14R*/          /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      23,    0,    2,    2    /*R_PARISC_DPREL14F*/          /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      26,    0,    1,    3    /*R_PARISC_DLTREL21L*/         /* sz = 4, bitsize = 21, dst_mask = 000000000000000000 */
+      30,    0,    2,    2    /*R_PARISC_DLTREL14R*/         /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      31,    0,    2,    2    /*R_PARISC_DLTREL14F*/         /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      34,    0,    1,    3    /*R_PARISC_DLTIND21L*/         /* sz = 4, bitsize = 21, dst_mask = 000000000000000000 */
+      38,    0,    2,    2    /*R_PARISC_DLTIND14R*/         /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      39,    0,    2,    2    /*R_PARISC_DLTIND14F*/         /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      40,    0,    0,    0    /*R_PARISC_SETBASE*/           /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      41,    0,    0,    4    /*R_PARISC_SECREL32*/          /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      42,    0,    1,    3    /*R_PARISC_BASEREL21L*/        /* sz = 4, bitsize = 21, dst_mask = 000000000000000000 */
+      43,    0,    1,    3    /*R_PARISC_BASEREL17R*/        /* sz = 4, bitsize = 17, dst_mask = 000000000000000000 */
+      44,    0,    1,    3    /*R_PARISC_BASEREL17F*/        /* sz = 4, bitsize = 17, dst_mask = 000000000000000000 */
+      46,    0,    2,    2    /*R_PARISC_BASEREL14R*/        /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      47,    0,    2,    2    /*R_PARISC_BASEREL14F*/        /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      48,    0,    0,    0    /*R_PARISC_SEGBASE*/           /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      49,    0,    0,    4    /*R_PARISC_SEGREL32*/          /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+      50,    0,    1,    3    /*R_PARISC_PLTOFF21L*/         /* sz = 4, bitsize = 21, dst_mask = 000000000000000000 */
+      54,    0,    2,    2    /*R_PARISC_PLTOFF14R*/         /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      55,    0,    2,    2    /*R_PARISC_PLTOFF14F*/         /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      57,    0,    0,    4    /*R_PARISC_LTOFF_FPTR32*/      /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+      58,    0,    1,    3    /*R_PARISC_LTOFF_FPTR21L*/     /* sz = 4, bitsize = 21, dst_mask = 000000000000000000 */
+      62,    0,    2,    2    /*R_PARISC_LTOFF_FPTR14R*/     /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      64,    0,    0,    8    /*R_PARISC_FPTR64*/            /* sz = 8, bitsize = 64, dst_mask = 000000000000000000 */
+      65,    0,    0,    4    /*R_PARISC_PLABEL32*/          /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+      66,    0,    1,    3    /*R_PARISC_PLABEL21L*/         /* sz = 4, bitsize = 21, dst_mask = 000000000000000000 */
+      70,    0,    2,    2    /*R_PARISC_PLABEL14R*/         /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      72,    0,    0,    8    /*R_PARISC_PCREL64*/           /* sz = 8, bitsize = 64, dst_mask = 000000000000000000 */
+      73,    0,    1,    3    /*R_PARISC_PCREL22C*/          /* sz = 4, bitsize = 22, dst_mask = 000000000000000000 */
+      74,    0,    1,    3    /*R_PARISC_PCREL22F*/          /* sz = 4, bitsize = 22, dst_mask = 000000000000000000 */
+      75,    0,    2,    2    /*R_PARISC_PCREL14WR*/         /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      76,    0,    2,    2    /*R_PARISC_PCREL14DR*/         /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      77,    0,    2,    2    /*R_PARISC_PCREL16F*/          /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+      78,    0,    2,    2    /*R_PARISC_PCREL16WF*/         /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+      79,    0,    2,    2    /*R_PARISC_PCREL16DF*/         /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+      80,    0,    0,    8    /*R_PARISC_DIR64*/             /* sz = 8, bitsize = 64, dst_mask = 000000000000000000 */
+      83,    0,    2,    2    /*R_PARISC_DIR14WR*/           /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      84,    0,    2,    2    /*R_PARISC_DIR14DR*/           /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      85,    0,    2,    2    /*R_PARISC_DIR16F*/            /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+      86,    0,    2,    2    /*R_PARISC_DIR16WF*/           /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+      87,    0,    2,    2    /*R_PARISC_DIR16DF*/           /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+      88,    0,    0,    8    /*R_PARISC_GPREL64*/           /* sz = 8, bitsize = 64, dst_mask = 000000000000000000 */
+      91,    0,    2,    2    /*R_PARISC_DLTREL14WR*/        /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      92,    0,    2,    2    /*R_PARISC_DLTREL14DR*/        /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+      93,    0,    2,    2    /*R_PARISC_GPREL16F*/          /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+      94,    0,    2,    2    /*R_PARISC_GPREL16WF*/         /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+      95,    0,    2,    2    /*R_PARISC_GPREL16DF*/         /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+      96,    0,    0,    8    /*R_PARISC_LTOFF64*/           /* sz = 8, bitsize = 64, dst_mask = 000000000000000000 */
+      99,    0,    2,    2    /*R_PARISC_DLTIND14WR*/        /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     100,    0,    2,    2    /*R_PARISC_DLTIND14DR*/        /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     101,    0,    2,    2    /*R_PARISC_LTOFF16F*/          /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     102,    0,    2,    2    /*R_PARISC_LTOFF16WF*/         /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     103,    0,    2,    2    /*R_PARISC_LTOFF16DF*/         /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     107,    0,    2,    2    /*R_PARISC_BASEREL14WR*/       /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     108,    0,    2,    2    /*R_PARISC_BASEREL14DR*/       /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     112,    0,    0,    8    /*R_PARISC_SEGREL64*/          /* sz = 8, bitsize = 64, dst_mask = 000000000000000000 */
+     115,    0,    2,    2    /*R_PARISC_PLTOFF14WR*/        /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     116,    0,    2,    2    /*R_PARISC_PLTOFF14DR*/        /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     117,    0,    2,    2    /*R_PARISC_PLTOFF16F*/         /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     118,    0,    2,    2    /*R_PARISC_PLTOFF16WF*/        /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     119,    0,    2,    2    /*R_PARISC_PLTOFF16DF*/        /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     120,    0,    0,    8    /*R_PARISC_LTOFF_FPTR64*/      /* sz = 8, bitsize = 64, dst_mask = 000000000000000000 */
+     123,    0,    2,    2    /*R_PARISC_LTOFF_FPTR14WR*/    /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     124,    0,    2,    2    /*R_PARISC_LTOFF_FPTR14DR*/    /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     125,    0,    2,    2    /*R_PARISC_LTOFF_FPTR16F*/     /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     126,    0,    2,    2    /*R_PARISC_LTOFF_FPTR16WF*/    /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     127,    0,    2,    2    /*R_PARISC_LTOFF_FPTR16DF*/    /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     128,    0,    0,    0    /*R_PARISC_COPY*/              /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+     129,    0,    0,    0    /*R_PARISC_IPLT*/              /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+     130,    0,    0,    0    /*R_PARISC_EPLT*/              /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+     153,    0,    0,    4    /*R_PARISC_TPREL32*/           /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+     154,    0,    1,    3    /*R_PARISC_TPREL21L*/          /* sz = 4, bitsize = 21, dst_mask = 000000000000000000 */
+     158,    0,    2,    2    /*R_PARISC_TPREL14R*/          /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     162,    0,    1,    3    /*R_PARISC_LTOFF_TP21L*/       /* sz = 4, bitsize = 21, dst_mask = 000000000000000000 */
+     166,    0,    2,    2    /*R_PARISC_LTOFF_TP14R*/       /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     167,    0,    2,    2    /*R_PARISC_LTOFF_TP14F*/       /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     216,    0,    0,    8    /*R_PARISC_TPREL64*/           /* sz = 8, bitsize = 64, dst_mask = 000000000000000000 */
+     219,    0,    2,    2    /*R_PARISC_TPREL14WR*/         /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     220,    0,    2,    2    /*R_PARISC_TPREL14DR*/         /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     221,    0,    2,    2    /*R_PARISC_TPREL16F*/          /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     222,    0,    2,    2    /*R_PARISC_TPREL16WF*/         /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     223,    0,    2,    2    /*R_PARISC_TPREL16DF*/         /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     224,    0,    0,    8    /*R_PARISC_LTOFF_TP64*/        /* sz = 8, bitsize = 64, dst_mask = 000000000000000000 */
+     227,    0,    2,    2    /*R_PARISC_LTOFF_TP14WR*/      /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     228,    0,    2,    2    /*R_PARISC_LTOFF_TP14DR*/      /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     229,    0,    2,    2    /*R_PARISC_LTOFF_TP16F*/       /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     230,    0,    2,    2    /*R_PARISC_LTOFF_TP16WF*/      /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     231,    0,    2,    2    /*R_PARISC_LTOFF_TP16DF*/      /* sz = 4, bitsize = 16, dst_mask = 000000000000000000 */
+     232,    0,    0,    0    /*R_PARISC_GNU_VTENTRY*/       /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+     233,    0,    0,    0    /*R_PARISC_GNU_VTINHERIT*/     /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+     234,    0,    1,    3    /*R_PARISC_TLS_GD21L*/         /* sz = 4, bitsize = 21, dst_mask = 000000000000000000 */
+     235,    0,    2,    2    /*R_PARISC_TLS_GD14R*/         /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     236,    0,    0,    0    /*R_PARISC_TLS_GDCALL*/        /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+     237,    0,    1,    3    /*R_PARISC_TLS_LDM21L*/        /* sz = 4, bitsize = 21, dst_mask = 000000000000000000 */
+     238,    0,    2,    2    /*R_PARISC_TLS_LDM14R*/        /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     239,    0,    0,    0    /*R_PARISC_TLS_LDMCALL*/       /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+     240,    0,    1,    3    /*R_PARISC_TLS_LDO21L*/        /* sz = 4, bitsize = 21, dst_mask = 000000000000000000 */
+     241,    0,    2,    2    /*R_PARISC_TLS_LDO14R*/        /* sz = 4, bitsize = 14, dst_mask = 000000000000000000 */
+     242,    0,    0,    4    /*R_PARISC_TLS_DTPMOD32*/      /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+     243,    0,    0,    8    /*R_PARISC_TLS_DTPMOD64*/      /* sz = 8, bitsize = 64, dst_mask = 000000000000000000 */
+     244,    0,    0,    4    /*R_PARISC_TLS_DTPOFF32*/      /* sz = 4, bitsize = 32, dst_mask = 000000000000000000 */
+     245,    0,    0,    8    /*R_PARISC_TLS_DTPOFF64*/      /* sz = 8, bitsize = 64, dst_mask = 000000000000000000 */
+
+TABLE 40:    /*EM_ARM*/                    
+       0,    0,    0,    0    /*R_ARM_NONE*/                 /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+       1,    0,    1,    3    /*R_ARM_PC24*/                 /* sz = 4, bitsize = 24, dst_mask = 0x0000000000ffffff */
+       2,    0,    0,    4    /*R_ARM_ABS32*/                /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       3,    0,    0,    4    /*R_ARM_REL32*/                /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       4,    0,    0,    4    /*R_ARM_LDR_PC_G0*/            /* sz = 1, bitsize = 32, dst_mask = 0x00000000ffffffff */
+       5,    0,    0,    2    /*R_ARM_ABS16*/                /* sz = 2, bitsize = 16, dst_mask = 0x000000000000ffff */
+       6,    0,    2,    2    /*R_ARM_ABS12*/                /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+       7,    0,    0,    2    /*R_ARM_THM_ABS5*/             /* sz = 2, bitsize =  5, dst_mask = 0x00000000000007e0 */
+       8,    0,    0,    1    /*R_ARM_ABS8*/                 /* sz = 1, bitsize =  8, dst_mask = 0x00000000000000ff */
+       9,    0,    0,    4    /*R_ARM_SBREL32*/              /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      10,    0,    0,    4    /*R_ARM_THM_CALL*/             /* sz = 4, bitsize = 24, dst_mask = 0x0000000007ff2fff */
+      11,    0,    1,    1    /*R_ARM_THM_PC8*/              /* sz = 2, bitsize =  8, dst_mask = 0x00000000000000ff */
+      12,    0,    0,    4    /*R_ARM_BREL_ADJ*/             /* sz = 2, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      13,    0,    0,    4    /*R_ARM_TLS_DESC*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      14,    0,    0,    0    /*R_ARM_THM_SWI8*/             /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+      15,    0,    1,    3    /*R_ARM_XPC25*/                /* sz = 4, bitsize = 24, dst_mask = 0x0000000000ffffff */
+      16,    0,    0,    4    /*R_ARM_THM_XPC22*/            /* sz = 4, bitsize = 24, dst_mask = 0x0000000007ff2fff */
+      17,    0,    0,    4    /*R_ARM_TLS_DTPMOD32*/         /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      18,    0,    0,    4    /*R_ARM_TLS_DTPOFF32*/         /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      19,    0,    0,    4    /*R_ARM_TLS_TPOFF32*/          /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      20,    0,    0,    4    /*R_ARM_COPY*/                 /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      21,    0,    0,    4    /*R_ARM_GLOB_DAT*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      22,    0,    0,    4    /*R_ARM_JUMP_SLOT*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      23,    0,    0,    4    /*R_ARM_RELATIVE*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      24,    0,    0,    4    /*R_ARM_GOTOFF32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      25,    0,    0,    4    /*R_ARM_BASE_PREL*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      26,    0,    0,    4    /*R_ARM_GOT_BREL*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      27,    0,    1,    3    /*R_ARM_PLT32*/                /* sz = 4, bitsize = 24, dst_mask = 0x0000000000ffffff */
+      28,    0,    1,    3    /*R_ARM_CALL*/                 /* sz = 4, bitsize = 24, dst_mask = 0x0000000000ffffff */
+      29,    0,    1,    3    /*R_ARM_JUMP24*/               /* sz = 4, bitsize = 24, dst_mask = 0x0000000000ffffff */
+      30,    0,    0,    4    /*R_ARM_THM_JUMP24*/           /* sz = 4, bitsize = 24, dst_mask = 0x0000000007ff2fff */
+      31,    0,    0,    4    /*R_ARM_BASE_ABS*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      32,    0,    2,    2    /*R_ARM_ALU_PCREL7_0*/         /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+      33,    0,    2,    2    /*R_ARM_ALU_PCREL15_8*/        /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+      34,    0,    2,    2    /*R_ARM_ALU_PCREL23_15*/       /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+      35,    0,    2,    2    /*R_ARM_LDR_SBREL_11_0*/       /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+      36,    1,    1,    2    /*R_ARM_ALU_SBREL_19_12*/      /* sz = 4, bitsize =  8, dst_mask = 0x00000000000ff000 */
+      37,    2,    0,    2    /*R_ARM_ALU_SBREL_27_20*/      /* sz = 4, bitsize =  8, dst_mask = 0x000000000ff00000 */
+      38,    0,    0,    4    /*R_ARM_TARGET1*/              /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      40,    0,    0,    4    /*R_ARM_V4BX*/                 /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      41,    0,    0,    4    /*R_ARM_TARGET2*/              /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      42,    0,    0,    4    /*R_ARM_PREL31*/               /* sz = 4, bitsize = 31, dst_mask = 0x000000007fffffff */
+      43,    0,    1,    3    /*R_ARM_MOVW_ABS_NC*/          /* sz = 4, bitsize = 16, dst_mask = 0x00000000000f0fff */
+      44,    0,    1,    3    /*R_ARM_MOVT_ABS*/             /* sz = 4, bitsize = 16, dst_mask = 0x00000000000f0fff */
+      45,    0,    1,    3    /*R_ARM_MOVW_PREL_NC*/         /* sz = 4, bitsize = 16, dst_mask = 0x00000000000f0fff */
+      46,    0,    1,    3    /*R_ARM_MOVT_PREL*/            /* sz = 4, bitsize = 16, dst_mask = 0x00000000000f0fff */
+      47,    0,    0,    4    /*R_ARM_THM_MOVW_ABS_NC*/      /* sz = 4, bitsize = 16, dst_mask = 0x00000000040f70ff */
+      48,    0,    0,    4    /*R_ARM_THM_MOVT_ABS*/         /* sz = 4, bitsize = 16, dst_mask = 0x00000000040f70ff */
+      49,    0,    0,    4    /*R_ARM_THM_MOVW_PREL_NC*/     /* sz = 4, bitsize = 16, dst_mask = 0x00000000040f70ff */
+      50,    0,    0,    4    /*R_ARM_THM_MOVT_PREL*/        /* sz = 4, bitsize = 16, dst_mask = 0x00000000040f70ff */
+      51,    0,    0,    4    /*R_ARM_THM_JUMP19*/           /* sz = 4, bitsize = 19, dst_mask = 0x00000000043f2fff */
+      52,    0,    0,    2    /*R_ARM_THM_JUMP6*/            /* sz = 2, bitsize =  6, dst_mask = 0x00000000000002f8 */
+      53,    0,    0,    4    /*R_ARM_THM_ALU_PREL_11_0*/    /* sz = 4, bitsize = 13, dst_mask = 0x00000000ffffffff */
+      54,    0,    0,    4    /*R_ARM_THM_PC12*/             /* sz = 4, bitsize = 13, dst_mask = 0x00000000ffffffff */
+      55,    0,    0,    4    /*R_ARM_ABS32_NOI*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      56,    0,    0,    4    /*R_ARM_REL32_NOI*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      57,    0,    0,    4    /*R_ARM_ALU_PC_G0_NC*/         /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      58,    0,    0,    4    /*R_ARM_ALU_PC_G0*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      59,    0,    0,    4    /*R_ARM_ALU_PC_G1_NC*/         /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      60,    0,    0,    4    /*R_ARM_ALU_PC_G1*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      61,    0,    0,    4    /*R_ARM_ALU_PC_G2*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      62,    0,    0,    4    /*R_ARM_LDR_PC_G1*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      63,    0,    0,    4    /*R_ARM_LDR_PC_G2*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      64,    0,    0,    4    /*R_ARM_LDRS_PC_G0*/           /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      65,    0,    0,    4    /*R_ARM_LDRS_PC_G1*/           /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      66,    0,    0,    4    /*R_ARM_LDRS_PC_G2*/           /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      67,    0,    0,    4    /*R_ARM_LDC_PC_G0*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      68,    0,    0,    4    /*R_ARM_LDC_PC_G1*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      69,    0,    0,    4    /*R_ARM_LDC_PC_G2*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      70,    0,    0,    4    /*R_ARM_ALU_SB_G0_NC*/         /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      71,    0,    0,    4    /*R_ARM_ALU_SB_G0*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      72,    0,    0,    4    /*R_ARM_ALU_SB_G1_NC*/         /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      73,    0,    0,    4    /*R_ARM_ALU_SB_G1*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      74,    0,    0,    4    /*R_ARM_ALU_SB_G2*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      75,    0,    0,    4    /*R_ARM_LDR_SB_G0*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      76,    0,    0,    4    /*R_ARM_LDR_SB_G1*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      77,    0,    0,    4    /*R_ARM_LDR_SB_G2*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      78,    0,    0,    4    /*R_ARM_LDRS_SB_G0*/           /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      79,    0,    0,    4    /*R_ARM_LDRS_SB_G1*/           /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      80,    0,    0,    4    /*R_ARM_LDRS_SB_G2*/           /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      81,    0,    0,    4    /*R_ARM_LDC_SB_G0*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      82,    0,    0,    4    /*R_ARM_LDC_SB_G1*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      83,    0,    0,    4    /*R_ARM_LDC_SB_G2*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      84,    0,    2,    2    /*R_ARM_MOVW_BREL_NC*/         /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      85,    0,    2,    2    /*R_ARM_MOVT_BREL*/            /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      86,    0,    2,    2    /*R_ARM_MOVW_BREL*/            /* sz = 4, bitsize = 16, dst_mask = 0x000000000000ffff */
+      87,    0,    0,    4    /*R_ARM_THM_MOVW_BREL_NC*/     /* sz = 4, bitsize = 16, dst_mask = 0x00000000040f70ff */
+      88,    0,    0,    4    /*R_ARM_THM_MOVT_BREL*/        /* sz = 4, bitsize = 16, dst_mask = 0x00000000040f70ff */
+      89,    0,    0,    4    /*R_ARM_THM_MOVW_BREL*/        /* sz = 4, bitsize = 16, dst_mask = 0x00000000040f70ff */
+      90,    0,    0,    4    /*R_ARM_TLS_GOTDESC*/          /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      91,    0,    1,    3    /*R_ARM_TLS_CALL*/             /* sz = 4, bitsize = 24, dst_mask = 0x0000000000ffffff */
+      92,    0,    0,    0    /*R_ARM_TLS_DESCSEQ*/          /* sz = 4, bitsize =  0, dst_mask = 000000000000000000 */
+      93,    0,    0,    4    /*R_ARM_THM_TLS_CALL*/         /* sz = 4, bitsize = 24, dst_mask = 0x0000000007ff07ff */
+      94,    0,    0,    4    /*R_ARM_PLT32_ABS*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      95,    0,    0,    4    /*R_ARM_GOT_ABS*/              /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      96,    0,    0,    4    /*R_ARM_GOT_PREL*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+      97,    0,    2,    2    /*R_ARM_GOT_BREL12*/           /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+      98,    0,    2,    2    /*R_ARM_GOTOFF12*/             /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+     100,    0,    0,    0    /*R_ARM_GNU_VTENTRY*/          /* sz = 4, bitsize =  0, dst_mask = 000000000000000000 */
+     101,    0,    0,    0    /*R_ARM_GNU_VTINHERIT*/        /* sz = 4, bitsize =  0, dst_mask = 000000000000000000 */
+     102,    0,    0,    2    /*R_ARM_THM_JUMP11*/           /* sz = 2, bitsize = 11, dst_mask = 0x00000000000007ff */
+     103,    0,    1,    1    /*R_ARM_THM_JUMP8*/            /* sz = 2, bitsize =  8, dst_mask = 0x00000000000000ff */
+     104,    0,    0,    4    /*R_ARM_TLS_GD32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     105,    0,    0,    4    /*R_ARM_TLS_LDM32*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     106,    0,    0,    4    /*R_ARM_TLS_LDO32*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     107,    0,    0,    4    /*R_ARM_TLS_IE32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     108,    0,    0,    4    /*R_ARM_TLS_LE32*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     109,    0,    2,    2    /*R_ARM_TLS_LDO12*/            /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+     110,    0,    2,    2    /*R_ARM_TLS_LE12*/             /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+     111,    0,    2,    2    /*R_ARM_TLS_IE12GP*/           /* sz = 4, bitsize = 12, dst_mask = 0x0000000000000fff */
+     136,    0,    1,    3    /*R_ARM_THM_BF16*/             /* sz = 2, bitsize = 16, dst_mask = 0x00000000001f0ffe */
+     137,    0,    1,    3    /*R_ARM_THM_BF12*/             /* sz = 2, bitsize = 12, dst_mask = 0x0000000000010ffe */
+     138,    0,    1,    3    /*R_ARM_THM_BF18*/             /* sz = 2, bitsize = 18, dst_mask = 0x00000000007f0ffe */
+     160,    0,    0,    4    /*R_ARM_IRELATIVE*/            /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     161,    0,    0,    4    /*R_ARM_GOTFUNCDESC*/          /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     162,    0,    0,    4    /*R_ARM_GOTOFFFUNCDESC*/       /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     163,    0,    0,    4    /*R_ARM_FUNCDESC*/             /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     164,    0,    4,    8    /*R_ARM_FUNCDESC_VALUE*/       /* sz = 4, bitsize = 64, dst_mask = 0x00000000ffffffff */
+     165,    0,    0,    4    /*R_ARM_TLS_GD32_FDPIC*/       /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     166,    0,    0,    4    /*R_ARM_TLS_LDM32_FDPIC*/      /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     167,    0,    0,    4    /*R_ARM_TLS_IE32_FDPIC*/       /* sz = 4, bitsize = 32, dst_mask = 0x00000000ffffffff */
+     252,    0,    0,    0    /*R_ARM_RREL32*/               /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+     253,    0,    0,    0    /*R_ARM_RABS32*/               /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+     254,    0,    0,    0    /*R_ARM_RPC24*/                /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */
+     255,    0,    0,    0    /*R_ARM_RBASE*/                /* sz = 0, bitsize =  0, dst_mask = 000000000000000000 */

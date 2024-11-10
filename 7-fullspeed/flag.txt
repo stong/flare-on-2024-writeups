@@ -1,0 +1,17 @@
+verify�verify�ls�=== dirs ===
+secrets
+=== files ===
+fullspeed.exe
+�cd|secrets�ok�ls�=== dirs ===
+super secrets
+=== files ===
+�cd|super secrets�ok�ls�=== dirs ===
+.hidden
+=== files ===
+�cd|.hidden�ok�ls�=== dirs ===
+wait, dot folders aren't hidden on windows
+=== files ===
+�cd|wait, dot folders aren't hidden on windows�ok�ls�=== dirs ===
+=== files ===
+flag.txt
+�cat|flag.txt�RDBudF9VNWVfeTB1cl9Pd25fQ3VSdjNzQGZsYXJlLW9uLmNvbQ==�exit�
