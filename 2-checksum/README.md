@@ -1,6 +1,8 @@
 # 2: Checksum
 
-This is another easy warmup challenge. It's a Windows exe compiled with Golang. The main gimmick is that it's Golang which makes the Hex-Rays experience less ideal, but with IDA 9 it's much better than before, and we even have symbols for most library functions.
+This is another easy warmup challenge. Unfortunately I overcomplicated it since I'm an idiot, but the challenge should be solveable very quickly.
+
+It's a Windows exe compiled with Golang. The main gimmick is that it's Golang which makes the Hex-Rays experience less ideal, but with IDA 9 it's much better than before, and we even have symbols for most library functions.
 
 Basically, it asks you to do some math problems (see below for example)
 
@@ -101,4 +103,8 @@ Checksum: 7fd7dd1d0e959f74c133c13abb740b9faa61ab06bd0ecd177645e93b1e3825dd
 Noice!!
 ```
 
-Unfortunately I overcomplicated it since I'm an idiot.
+Instead it saves the flag to %localappdata%\REAL_FLAREON_FLAG.JPG
+
+![image](https://github.com/user-attachments/assets/e33fa8f6-6fe2-4802-8a72-ae4192661eca)
+
+Why is the "checksum" necessary? The user specified password is the decryption key for the flag image. The encrypted flag is stored in the exe.
