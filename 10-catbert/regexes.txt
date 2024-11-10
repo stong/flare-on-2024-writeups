@@ -1,0 +1,12 @@
+PUSH_IMM16 
+PUSH 
+
+(.{18}) PUSH (.+)\n.{18} PUSH (.+)\n.{18} STORE_TWO\n
+\1 mem[\2] = \3\n
+
+(.{18}) PUSH (.+)\n.{18} LOAD_AND_PUSH\n
+\1 PUSH mem[\2]\n
+
+
+(.{18}) PUSH (.+)\n.{18} PUSH (.+)\n.{18} (SHL|SHR|XOR|OR|AND|SUB|DIV|MUL|ROL32|ROR32|ROL16|ROR16|ROL8|ROR8|CMP_EQ|CMP_LT|CMP_LE|CMP_GT|CMP_GE|ADD_TOP)\n
+\1 PUSH (\2 \4 \3)\n

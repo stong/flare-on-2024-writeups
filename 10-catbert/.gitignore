@@ -1,0 +1,22 @@
+edk2
+edk2-asdf
+qemu-9.1.1
+qemu-9.1.1.tar.xz
+guess3.txt
+bios.bin.i64
+lolg.txt
+qemu.log
+dump.bin.bak
+dump.bin
+UEFITool_NE_A68_win64.zip
+UEFITool.exe
+UEFIExtract.exe
+UEFIFind.exe
+qemu-asmonly.log
+log2.txt
+log.txt
+biglog.txt
+Build Logs OVMF_IA32X64_DEBUG.zip
+UEFIExtract_NE_A68_win64.zip  
+UEFIFind_NE_A68_win64.zip   
+_bios.bin.extracted/**
