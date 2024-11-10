@@ -1,43 +1,47 @@
-bloke2
-======
+# 6: Bloke2
 
-One of our lab researchers has mysteriously disappeared.  He was working on the
-prototype for a hashing IP block that worked very much like, but not identically
-to, the common Blake2 hash family.  Last we heard from him, he was working on
-the testbenches for the unit.  One of his labmates swears she knew of a secret
-message that could be extracted with the testbenches, but she couldn't quite
-recall how to trigger it.  Maybe you could help?
+In this challenge, you have to reverse engineer a secret message out of a hardware Blake2 hash function implementation written in Verilog, plus a iverilog testbench.
 
+To be honest, I have no idea what the fuck is going in this one, I just copy pasted all the code into chatgpt and asked it to solve the challenge, and it solved it right off the bat. LOL
 
-Details
-_______
+![image](https://github.com/user-attachments/assets/06a0223a-06cc-4ea5-ade9-c0bdc718f1db)
 
-This source code is written in the Verilog hardware description language.  It is
-written in the subset of SystemVerilog supported by the free and easily
-available Icarus Verilog simulator (available under various package managers as
-either `iverilog` or `icarus-verilog`).  It is not tested on, nor is it
-guaranteed to run on, any other Verilog simulators (and in fact, I would not
-recommend trying, as Icarus is... somewhat more permissive in some aspects than
-a lot of commercial tooling).
+Basically, the `finish` wire is usually logic low at the start, but if you make it start out as logic high, then the module will output a hidden message.
 
-The files can be built via GNU Make with the accompanying `Makefile`; simply
-`make` to build the total source and check for errors, or `make tests` to build
-and run the testbenches.  If you don't have GNU Make, you should be able to
-build it with `iverilog -g2012 -s <top_module> *.v` followed by `vvp a.out` to
-run the testbench.  For example:
+I mean these are the only changes I had to do to solve the challenge:
 
+```diff
+bloke2b_tb.v
+<               finish <= 1'b1;
+---
+>               finish <= 1'b0;
+bloke2s_tb.v
+73c73
+<               finish <= 1'b1;
+---
+>               finish <= 1'b0;
+data_mgr.v
+<                               // $display("%t dmgr din d %h m %h c %h t %h f %b t %b", $time, data_in, m, cnt, t, f, tst);
+---
+>                               //$display("%t dmgr din d %h m %h c %h t %h f %b t %b", $time, data_in, m, cnt, t, f, tst);
+<                               $display("%t dmgr dout h %h t %b", $time, h_in, tst);
+---
+>                               //$display("%t dmgr dout h %h t %b", $time, h_in, tst);
+f_unit.v
+89c89
+<                       // $display("%t f_unit dv %b drdy %b dvo %b", $time, dv_in, drdy_out, dv_out);
+---
+>                       //$display("%t f_unit dv %b drdy %b dvo %b", $time, dv_in, drdy_out, dv_out);
+91c91
+<                               // $display("%t f_unit start %h", $time, m_in);
+---
+>                               //$display("%t f_unit start %h", $time, m_in);
+98c98
+<                               // $display("%t f_unit rnd %h sub %h v %h", $time, rnd_ctr, sub_ctr, v);
+---
+>                               //$display("%t f_unit rnd %h sub %h v %h", $time, rnd_ctr, sub_ctr, v);
 ```
-iverilog -g2012 -s f_sched_tb *.v
-vvp a.out
-```
 
-You should be able to get to the answer by modifying testbenches alone, though
-there are some helpful diagnostics inside some of the code files which you coulduncomment if you want a look at what's going on inside.  Brute-forcing won't
-really help you here; some things have been changed from the true implementation
-of Blake2 to discourage brute-force attempts.
+Basically uncommenting some debug statements and the start/finish thing.
 
-
-
-Happy hardware hacking!
-
-- Dave
+![image](https://github.com/user-attachments/assets/9ac2e927-16a0-4b2e-ad9c-20af24f31b31)
