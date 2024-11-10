@@ -67,4 +67,19 @@ k mod 111659 = 60997
 Solving DLP modulo 113111...
 k mod 113111 = 95883
 The discrete logarithm k is: 1347455424744677257745571369218247 (mod 4374617177662805965808447230529629)
+
+sage:
+....: Lol = G*k
+....: Wow = G*M
+....: for i in range(2^18):
+....:     if Lol == P:
+....:         print(i)
+....:         break
+....:     Lol += Wow
+....: dlog = k+M*i
+....: assert (G*dlog==P)
+35137
+
+sage: dlog
+153712271226962757897869155910488792420
 ```
