@@ -11,7 +11,7 @@
 - also compile a nativeAOT binary with the exact same version of bouncycastle they use to get flirt signatures
 - reverse the damn thing
 - ok it's ECDH, but the ECDH is implemented correctly. shared key is then used for chacha20
-- the curve parameters are shitty, it has a large nonprime subgroup but cofactor is not handled properly
+- the curve parameters are shitty, it has a large nonprime subgroup but cofactor is not handled properly. shoutout to Chatgpt on this one, i was like "idk just write me a sage script to audit these parameters for problems" and i didnt even have to use my brain
 - curve order is not prime and in fact it's in factordb
 - Pohlig-Hellman, basically we are in a group G, but G is not prime, there's subgroups, we can do chinese remainder theorem if we solve in subgroups, can combine sub solutions into main solution. the attack is if the main group has small subgroups we can solve easly in, and combine all the solutions to the main group. (ECDH and factoring are both [hidden subgroup problem](https://en.wikipedia.org/wiki/Hidden_subgroup_problem))
 - BUT THERE IS STILL A LARGE-ISH PRIME SUBGROUP in the factorization :(((
