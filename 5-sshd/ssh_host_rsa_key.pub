@@ -1,0 +1,21 @@
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCpGiLjoWCVr+cYuUrdboUJAKTwqx3yC3VE5DFH++aFtMUSoapZysBkJN90tniliwVqNHjIZ+NupB6gzZ+9LJeNI/OA2kAduCbgIBiP3aj7Ckh6jkKsf/gEsEvOt3oRkFmvs2T8Rvr40oedk0W6TPHiES1tJgzXEaJb+ClrO/9el+UCd2OQ0/IVAGpvwrY6/WBEW23PUqDqLpnxbFlWMdcYealH3R0cV3nvwxxz/9CgSqdzJWRfFHW6ZVV3npS2fkqd0e43cMGFVilLW6BuVUtjNQWf9KelusQX+VvgDn1j53I3mvgV2LmVBzNuhPQGiOE19b8EA5z3dfTuGwfbRRq12cgeUY7DNJHUYrwBi6pcYv1LV8y+XfeOsuzv5xlknLe2udtn5tIQpaPPhP9rfckF8ocVJ44PXj4FMSdlbhPZPiqSOm4CMHuVw/KDYP8Y/F0ROblClRIr4nuV14ZhkXVwq441YXdN/BAXqsCg+YvW88fZbdKMhPjgYPcg90MbQO8= root@e303d6e4c6d7
+
+
+55b46c80e000-55b46c812000 rw-p 00000000 00:00 0
+55b46d51c000-55b46d53d000 rw-p 00000000 00:00 0                          [heap]
+7f4a18a4e000-7f4a18a53000 rw-p 00000000 00:00 0
+7f4a18a53000-7f4a18a54000 r--p 00000000 00:32 2768372                    /usr/lib/x86_64-linux-gnu/libpthread.so.0
+7f4a18a54000-7f4a18a55000 r-xp 00001000 00:32 2768372                    /usr/lib/x86_64-linux-gnu/libpthread.so.0
+7f4a18a55000-7f4a18a56000 r--p 00002000 00:32 2768372                    /usr/lib/x86_64-linux-gnu/libpthread.so.0
+7f4a18a56000-7f4a18a57000 r--p 00002000 00:32 2768372
+
+
+
+      fuck[       0x0 : 0x0  + 0xd000] = ida_bytes.get_bytes(0x55b46c6d9000     ,     0xd000) 
+      fuck[    0xd000 : 0xd000  + 0xce000] = ida_bytes.get_bytes(0x55b46c6e6000     ,    0xce000) 
+      fuck[   0xdb000 : 0xdb000  + 0x55000] = ida_bytes.get_bytes(0x55b46c7b4000     ,    0x55000) 
+      fuck[  0x12f000 : 0x12f000  + 0x4000] = ida_bytes.get_bytes(0x55b46c809000     ,     0x4000) 
+      fuck[  0x133000 : 0x133000  + 0x1000] = ida_bytes.get_bytes(0x55b46c80d000     ,     0x1000) 
+
+
+      fuck[0x133000:0x133000+0x1000]= ida_bytes.get_bytes(0x55b46c80e000, 0x1000)

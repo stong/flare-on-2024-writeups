@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=User folders update
+TryExec=xdg-user-dirs-update
+Exec=xdg-user-dirs-update
+StartupNotify=false
+NoDisplay=true
+
+X-GNOME-Autostart-Phase=Initialization
+X-KDE-autostart-phase=1

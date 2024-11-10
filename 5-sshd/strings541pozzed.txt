@@ -1,0 +1,102 @@
+__vsnprintf_chk
+fopen
+fgets
+strchr
+__isoc99_sscanf
+fclose
+dlopen
+dlinfo
+dlclose
+_r_debug
+dlerror
+dladdr1
+strncmp
+mprotect
+__errno_location
+strerror
+getuid
+dlsym
+mmap
+libdl.so.2
+libpthread.so.0
+ld-linux-x86-64.so.2
+GLIBC_2.3.3
+GLIBC_2.7
+T$P1
+
+/proc/self/maps
+%lx-%lx %4s
+DT_SYMENT size %lu != %lu
+failed to find PLT_DT_RELENT
+failed to find PLT_DT_RELSZ
+failed to find DT_PLTRELSZ
+failed to find DT_STRSZ
+failed to find DT_STRTAB
+failed to find DT_SYMTAB
+dlopen error: %s
+dlinfo error
+NULL handle
+dladdr error
+no such function: %s
+RSA_public_decrypt 
+RSA_public_decrypt
+failed to open /proc/self/maps
+Unexcepted memory permission %s at %p
+Could not find memory region containing %p
+failed to find either of DT_JMPREL and DT_REL
+failed to allocate memory: %lu bytes
+too big section header string table index: %lu
+invalid argument: The first argument is null.
+Could not change the process memory permission at %p: %s
+&aDy*
+P{UR
+@rFk#
+$Epb
+U2P;
+-]\m
+ne?3
+7bN&	
+-?h:
+lnEM%>Z
+CL6'
+<l9k4
+:z;a
+x!-;
+6K>A
+e KS
+_.7K
+Ng$@
+gC#W
+2VC>f@
+/SQFau
+vaDl[.-V7
+u5\:3s
+yFOx_
+DD]i
+}.=r
+PLJK
+1aI;y
+iK&[
+)/\k*X
+~Dl(
+FcF	L
+3 DR
+g^{U
+qcg^'
+,3{L
+\HBDhG
+R`Q3D
+*N-Z
+MSL-
+Q/2dn
+Fqu0edE
+GKR)
+A~It
+`jQi
+Km]}
+:*3$"
+GCC: (Ubuntu 9.4.0-1ubuntu1~20.04.1) 9.4.0
+.note.gnu.property
+.plt.sec
+.got.plt
+.comment
