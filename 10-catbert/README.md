@@ -1,10 +1,14 @@
 # 10: Catbert
 
-Its a uefi shell application that decrypts files, the decryption for each file needs a password. The password is checked by a VM that's embedded in each encrypted file, so basically the gimmick is you have to solve three flag checker VMs.
+Its a uefi shell application that decrypts files, the decryption for each file needs a password. The password is checked by a VM that's embedded in each encrypted file, so basically the gimmick is you have to solve three flag checker VMs. Each file has one third of the flag
 
 If you solve all three flag checkers then you win the challenge.
 
 The bios itself is not interesting, it's just seabios i'm pretty sure. The shell application itself is also basically just some shit slapped on top of the one from edk2. So i compiled a fresh shell application on edk2 with the same toolchain and settings (vs2019, Emulator x64) and used that to make a FLIRT signature library. That gave us a lot of symbols which is very good
+
+You can run this shit in qemu with `qemu-system-x86_64 -bios bios.bin -drive format=raw,file=disk.img`
+
+Actually i wasted a ton of time because it requires an extremely up-to-date qemu and it was just triple faulting -.- Super fucking lame, only figured out when turned on more debug tracing in qemu
 
 ```c
 __int64 DecryptFile(void *a1)
@@ -679,3 +683,15 @@ b_second = (N/2)*inp_{N/2} + ... + 1*inp_N
 ```
 
 So now our search space is more like 32 bits. There are a LOT of possible combination of first and second half, so lots of possible solution to the adler32 hash. That's expected since we have 64-bit input and 32-bit output, so assuming equal distribution, we would have 4 billion collisions. That's still alright since we have only about 50 possible first half of the password. Anyways, we get the chatgpt special to do the overall final MITM. Refer to [mitm.c](./mitm.c) for meet in the middle attack that enumerates all the possible passwords
+
+After this last one, the efi file it decrypts is actually just a freebie, you're done at this point thank goodness
+
+![./catmeme1.jpg](./catmeme1.jpg)
+
+![./catmeme2.jpg](./catmeme2.jpg)
+
+![./catmeme3.jpg](./catmeme3.jpg)
+
+![image](https://github.com/user-attachments/assets/e224cf23-7800-4557-96b5-f6a6fb121bdc)
+
+![./catmeme3.jpg](./your_mind.jpg)
