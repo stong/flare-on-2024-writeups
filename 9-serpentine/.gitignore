@@ -1,0 +1,11 @@
+*.asm
+*.txt
+*.json
+a.out.*
+*.id*
+*.i64
+*.nam
+*.til
+.idea/**
+sysroot/
+_.git
