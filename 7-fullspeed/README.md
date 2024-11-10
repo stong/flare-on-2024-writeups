@@ -13,7 +13,7 @@
 - ok it's ECDH, but the ECDH is implemented correctly. shared key is then used for chacha20
 - the curve parameters are shitty, it has a large nonprime subgroup but cofactor is not handled properly
 - curve order is not prime and in fact it's in factordb
-- Pohlig-Hellman, basically we are in a group G, but G is not prime, there's subgroups, we can do chinese remainder theorem if we solve in subgroups, can combine sub solutions into main solution
+- Pohlig-Hellman, basically we are in a group G, but G is not prime, there's subgroups, we can do chinese remainder theorem if we solve in subgroups, can combine sub solutions into main solution. the attack is if the main group has small subgroups we can solve easly in, and combine all the solutions to the main group. (ECDH and factoring are both [hidden subgroup problem](https://en.wikipedia.org/wiki/Hidden_subgroup_problem))
 - BUT THERE IS STILL A LARGE-ISH PRIME SUBGROUP in the factorization :(((
 - oh well, do it modulo all the subgroup made up of other small primes subgroups that ARE small enough for us to factor
 - oh wait we know the nonce is only 128 bits but the subgroup of all the other small primes is like 110 bits ish, so we can brute here the other 18 bits
