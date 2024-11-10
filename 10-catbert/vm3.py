@@ -34,7 +34,7 @@ SOLVED = 0x0000
 TMP1 = 0x1505
 
 # First check
-while INDEX < 0x0004:
+while INDEX < 0x0004: # djb1 hash
     FLAGBYTE = (FLAG1 >> (0x0008 * INDEX)) & 0xFF
     TMP1 = ((TMP1 << 0x0005) + TMP1) + FLAGBYTE
     INDEX += 1
@@ -66,7 +66,7 @@ INDEX = 0x0000
 
 while INDEX < 0x0008:
     FLAGBYTE = (FLAG2 >> (0x0008 * INDEX)) & 0xFF
-    CHECKSUM_A = (CHECKSUM_A + FLAGBYTE) % 0xFFF1 # adler32?
+    CHECKSUM_A = (CHECKSUM_A + FLAGBYTE) % 0xFFF1 # adler32
     CHECKSUM_B = (CHECKSUM_B + CHECKSUM_A) % 0xFFF1
     INDEX += 1
 
