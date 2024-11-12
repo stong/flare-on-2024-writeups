@@ -6,5 +6,6 @@
 - that smart contract has some data in it
 - if you decompile that smart contract (i use dedaub decompiler), it's not interesting it's just a read write data store
 - the newest data is wrong but if you look at the right block, then it's gucci
+- also there is some xor bullshit going on
 - that data is a powershell script
 - that powershell script basically has the flag
