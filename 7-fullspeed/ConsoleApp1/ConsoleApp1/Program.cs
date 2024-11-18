@@ -161,9 +161,9 @@ namespace ConsoleApp1
             return name;
         }
 
-        static unsafe void Main(string[] args)
+        static void DoSolve()
         {
-            var q = new Org.BouncyCastle.Math.BigInteger("c90102faa48f18b5eac1f76bb40a1b9fb0d841712bbe3e5576a7a56976c2baeca47809765283aa078583e1e65172a3fd", 16);
+                        var q = new Org.BouncyCastle.Math.BigInteger("c90102faa48f18b5eac1f76bb40a1b9fb0d841712bbe3e5576a7a56976c2baeca47809765283aa078583e1e65172a3fd", 16);
             var a = new Org.BouncyCastle.Math.BigInteger("a079db08ea2470350c182487b50f7707dd46a58a1d160ff79297dcc9bfad6cfc96a81c4a97564118a40331fe0fc1327f", 16);
             var b = new Org.BouncyCastle.Math.BigInteger("9f939c02a7bd7fc263a4cce416f4c575f28d0c1315c4f0c282fca6709a5f9f7f9c251c9eede9eb1baa31602167fa5380", 16);
             var gx = new Org.BouncyCastle.Math.BigInteger("087b5fe3ae6dcfb0e074b40f6208c8f6de4f4f0679d6933796d3b9bd659704fb85452f041fff14cf0e9aa7e45544f9d8", 16);
@@ -261,8 +261,10 @@ namespace ConsoleApp1
             fuck.ProcessBytes(inArr, 0, inArr.Length, outArr, 0);
 
             Console.WriteLine(BitConverter.ToString(outArr).Replace("-", ""));
-            return;
+        }
 
+        static void DoCryptoECTest()
+        {
             //byte[] point = new byte[] { 0x0a, 0x6c, 0x55, 0x90, 0x73, 0xda, 0x49, 0x75, 0x4e, 0x9a, 0xd9, 0x84, 0x6a, 0x72, 0x95, 0x47, 0x45, 0xe4, 0xf2, 0x92, 0x12, 0x13, 0xec, 0xcd, 0xa4, 0xb1, 0x42, 0x2e, 0x2f, 0xdd, 0x64, 0x6f, 0xc7, 0xe2, 0x83, 0x89, 0xc7, 0xc2, 0xe5, 0x1a, 0x59, 0x1e, 0x01, 0x47, 0xe2, 0xeb, 0xe7, 0xae };
             byte[] packet_bytes = {
             0xa0, 0xd2, 0xeb, 0xa8, 0x17, 0xe3, 0x8b, 0x03,
@@ -278,6 +280,15 @@ namespace ConsoleApp1
             x = x.Xor(new Org.BouncyCastle.Math.BigInteger("133713371337133713371337133713371337133713371337133713371337133713371337133713371337133713371337", 16));
             Console.WriteLine(x.ToString());
             return;
+        }
+        
+        static unsafe void Main(string[] args)
+        {
+            // DoSolve();
+            // return;
+
+            // DoCryptoECTest();
+            // return;
 
             Console.WriteLine("Hello World3! " + args[0]);
 
@@ -313,6 +324,7 @@ namespace ConsoleApp1
                 }
                 next.GetUnsigned(); // skip 1
                 var handleVal = next.GetUnsigned();
+                // Dump all entries
                 //Console.WriteLine($"{handleVal:X}");
                 //var it = hashtable.EnumerateAllEntries();
                 //for (; ;)
@@ -328,6 +340,7 @@ namespace ConsoleApp1
 
                 var mr = new Internal.Metadata.NativeFormat.MetadataReader(ptr, buf.Length);
 
+                // Dump all entries
                 //for (var fuck = mr.ScopeDefinitions.GetEnumerator(); fuck.MoveNext();)
                 //{
                 //    var shit = fuck.Current;
@@ -342,17 +355,12 @@ namespace ConsoleApp1
 
             }
 
-
-
-
-
-
-            if (args.Length == 69)
-            {
-                CryptoBs(args[3].Length);
-                SocketBullshit();
-            }
-
+            // This shit just for generating the code to make a .sig with for IDA
+            // if (args.Length == 69)
+            // {
+            //     CryptoBs(args[3].Length);
+            //     SocketBullshit();
+            // }
         }
     }
 }
