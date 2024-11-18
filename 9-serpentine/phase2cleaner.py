@@ -964,7 +964,10 @@ def dump_code(filename):
 def assemble(code, base_addr):
     new_code = b''
     for addr, mnemonic, operands in code:
-        # print(hex(add),mnemonic,operands)
+        print(hex(addr),mnemonic,operands)
+        if addr == 0x6c94c8b: # 0x6c94c8b jmp ['0x1400011b0'] (win instruction)
+            mnemonic = 'ret'
+            operands = []
         op_str = ", ".join(map(print_operand,operands))
         new_addr = base_addr + len(new_code)
         code_bytes, ninstr = ks.asm(mnemonic + ' ' + op_str, addr=new_addr)
@@ -975,7 +978,7 @@ def assemble(code, base_addr):
 
 # front-end
 
-code = open('new_code.asm','r').readlines()
+code = open('new_code3.asm','r').readlines()
 code = [l.strip() for l in code]
 def parse_line(l):
     m = re.match(r'(0x[0-9a-f]+) (\w+) ([^;]+)', l)
@@ -1008,12 +1011,12 @@ dump_code('post-unfuck-luts.asm')
 test_sim(quiet=True)
 
 code = copy_propagation(code)
-dump_code('post-copyprop.asm')
+dump_code('post-copypro2p.asm')
 test_sim(quiet=True)
 
 code = dce(code)
 code = normalize_bin_op(code)
-dump_code('post-dce.asm')
+dump_code('post-dce2.asm')
 test_sim(quiet=True)
 
 # a,b=sim(code, b'\xe2\x00\x00\x00' + b'\x04\x00\x00\x00' + b'\xa9\x00\x00\x00' + b'\x2c\x00\x00\x00'
@@ -1023,7 +1026,7 @@ test_sim(quiet=True)
 
 sym_exec(code)
 
-# back-end
+# # back-end
 
 code = instruction_selection(code)
 dump_code('post-isel.asm')
@@ -1034,7 +1037,7 @@ dump_code('post-regalloc.asm')
 test_sim(quiet=True)
 
 code = dce(code) # clean up shit like mov rax, rax
-dump_code('post-dce2.asm')
+dump_code('post-dce3.asm')
 test_sim(quiet=True)
 
 code = lower_tac(code)
