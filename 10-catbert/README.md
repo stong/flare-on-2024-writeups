@@ -600,7 +600,7 @@ LABEL_84:
 
 ## Disassembler
 
-Refer to [vmdisasm.py](./vmdisasm.py), yeah this is basically the fucken chatgpt special
+Refer to [vmdisasm.py](./vmdisasm.py), yeah this is basically the fucken claude.ai special
 
 ## Lifter
 
@@ -608,7 +608,7 @@ Refer to [cleanup.py](./cleanup.py)
 
 This is very bad but it works for this challenge, "correct" approach here is to symbolize the stack into stack slots
 
-This is also essentially the chatgpt special, but i came up with the regexs myself dicking around in sublime text. LOL
+This is also essentially the claude.ai special, but i came up with the regexs myself dicking around in sublime text. LOL
 
 ## Shit thats common to each vm
 
@@ -616,19 +616,19 @@ Password is 16 bytes, and split into two parts
 
 ## Vm 1
 
-Refer to [vm1.py](./vm1.py) for chatgpt translation into python (was mostly working, just needed small tweak to fix for SHR being mod 64 for number of bits to shift)
+Refer to [vm1.py](./vm1.py) for claude.ai translation into python (was mostly working, just needed small tweak to fix for SHR being mod 64 for number of bits to shift)
 
 Can just print the correct password value from it
 
 ## Vm2
 
-Refer to [vm2.py](./vm2.py) for chatgpt translation into python (was basically working immediately)
+Refer to [vm2.py](./vm2.py) for claude.ai translation into python (was basically working immediately)
 
 Can just print the correct password value from it
 
 ## Meet in the middle attack for VM 3
 
-Refer to [vm3.py](./vm3.py) for chatgpt translation into python plus some manual annotation
+Refer to [vm3.py](./vm3.py) for claude.ai translation into python plus some manual annotation
 
 Unfortunately this is actually four hash functions check on the input, and we can't just print the password.
 
@@ -682,7 +682,7 @@ a_second = inp_{N/2} + inp_{N/2+1} + ... inp_N
 b_second = (N/2)*inp_{N/2} + ... + 1*inp_N
 ```
 
-So now our search space is more like 32 bits. There are a LOT of possible combination of first and second half, so lots of possible solution to the adler32 hash. That's expected since we have 64-bit input and 32-bit output, so assuming equal distribution, we would have 4 billion collisions. That's still alright since we have only about 50 possible first half of the password. Anyways, we get the chatgpt special to do the overall final MITM. Refer to [mitm.c](./mitm.c) for meet in the middle attack that enumerates all the possible passwords
+So now our search space is more like 32 bits. There are a LOT of possible combination of first and second half, so lots of possible solution to the adler32 hash. That's expected since we have 64-bit input and 32-bit output, so assuming equal distribution, we would have 4 billion collisions. That's still alright since we have only about 50 possible first half of the password. Anyways, we get the claude.ai special to do the overall final MITM. Refer to [mitm.c](./mitm.c) for meet in the middle attack that enumerates all the possible passwords
 
 After this last one, the efi file it decrypts is actually just a freebie, you're done at this point thank goodness
 
