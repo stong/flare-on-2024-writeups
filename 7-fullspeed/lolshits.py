@@ -1,4 +1,4 @@
-Python>import idaapi
+import idaapi
 import idautils
 import idc
 
@@ -31,6 +31,7 @@ else:
                         print(f"Found call to {target_function} at {hex(insn_ea)}, first argument: {hex(first_arg)}")
                     else:
                         print(f"Found call to {target_function} at {hex(insn_ea)} but no arguments found.")
+"""
 Python>
 Found call to RhpNewFast at 0x140067d4d, first argument: 0x1401609e8
 Found call to RhpNewFast at 0x140067d6d, first argument: 0x1401609e8
@@ -1578,3 +1579,4 @@ Found call to RhpNewFast at 0x140137904, first argument: 0x3
 Found call to RhpNewFast at 0x14013792d, first argument: 0x8
 Found call to RhpNewFast at 0x140137955, first argument: 0x10
 Found call to RhpNewFast at 0x14013797a, first argument: 0x14015f330
+"""
