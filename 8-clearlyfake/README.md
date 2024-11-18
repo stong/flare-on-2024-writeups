@@ -4,7 +4,7 @@
 - that reads some data from a smart contract on BNB testnet
 - if you decompile the smart contract, it leads to another smart contract
 - that smart contract has some data in it
-- if you decompile that smart contract (i use dedaub decompiler), it's not interesting it's just a read write data store
+- if you decompile that smart contract (**i use dedaub decompiler, this is the only one out there that is non-shitty currently**), it's not interesting it's just a read write data store
 - the newest data is wrong but if you look at the right block, then it's gucci
 - also there is some xor bullshit going on
 - that data is a powershell script
