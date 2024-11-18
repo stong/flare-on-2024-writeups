@@ -400,36 +400,36 @@ sage: dlog
 
 ```cs
 static void DoSolve()
-        {
-            var q = new Org.BouncyCastle.Math.BigInteger("c90102faa48f18b5eac1f76bb40a1b9fb0d841712bbe3e5576a7a56976c2baeca47809765283aa078583e1e65172a3fd", 16);
-            var a = new Org.BouncyCastle.Math.BigInteger("a079db08ea2470350c182487b50f7707dd46a58a1d160ff79297dcc9bfad6cfc96a81c4a97564118a40331fe0fc1327f", 16);
-            var b = new Org.BouncyCastle.Math.BigInteger("9f939c02a7bd7fc263a4cce416f4c575f28d0c1315c4f0c282fca6709a5f9f7f9c251c9eede9eb1baa31602167fa5380", 16);
-            var gx = new Org.BouncyCastle.Math.BigInteger("087b5fe3ae6dcfb0e074b40f6208c8f6de4f4f0679d6933796d3b9bd659704fb85452f041fff14cf0e9aa7e45544f9d8", 16);
-            var gy = new Org.BouncyCastle.Math.BigInteger("127425c1d330ed537663e87459eaa1b1b53edfe305f6a79b184b3180033aab190eb9aa003e02e9dbf6d593c5e3b08182", 16);
-            var EC = new FpCurve(q, a, b);
-            var G = EC.CreatePoint(gx, gy);
-            var nonce = new Org.BouncyCastle.Math.BigInteger("168606034648973740214207039875253762473");
-            var P_local = G.Multiply(nonce);
-            var P_remote = EC.CreatePoint(new Org.BouncyCastle.Math.BigInteger("b3e5f89f04d49834de312110ae05f0649b3f0bbe2987304fc4ec2f46d6f036f1a897807c4e693e0bb5cd9ac8a8005f06", 16), new Org.BouncyCastle.Math.BigInteger("85944d98396918741316cd0109929cb706af0cca1eaf378219c5286bdc21e979210390573e3047645e1969bdbcb667eb", 16));
-            var P_shared = P_remote.Multiply(nonce);
-            P_shared = P_shared.Normalize();
-            var xCoord = P_shared.AffineXCoord;
-            Console.WriteLine(xCoord);
+{
+    var q = new Org.BouncyCastle.Math.BigInteger("c90102faa48f18b5eac1f76bb40a1b9fb0d841712bbe3e5576a7a56976c2baeca47809765283aa078583e1e65172a3fd", 16);
+    var a = new Org.BouncyCastle.Math.BigInteger("a079db08ea2470350c182487b50f7707dd46a58a1d160ff79297dcc9bfad6cfc96a81c4a97564118a40331fe0fc1327f", 16);
+    var b = new Org.BouncyCastle.Math.BigInteger("9f939c02a7bd7fc263a4cce416f4c575f28d0c1315c4f0c282fca6709a5f9f7f9c251c9eede9eb1baa31602167fa5380", 16);
+    var gx = new Org.BouncyCastle.Math.BigInteger("087b5fe3ae6dcfb0e074b40f6208c8f6de4f4f0679d6933796d3b9bd659704fb85452f041fff14cf0e9aa7e45544f9d8", 16);
+    var gy = new Org.BouncyCastle.Math.BigInteger("127425c1d330ed537663e87459eaa1b1b53edfe305f6a79b184b3180033aab190eb9aa003e02e9dbf6d593c5e3b08182", 16);
+    var EC = new FpCurve(q, a, b);
+    var G = EC.CreatePoint(gx, gy);
+    var nonce = new Org.BouncyCastle.Math.BigInteger("168606034648973740214207039875253762473");
+    var P_local = G.Multiply(nonce);
+    var P_remote = EC.CreatePoint(new Org.BouncyCastle.Math.BigInteger("b3e5f89f04d49834de312110ae05f0649b3f0bbe2987304fc4ec2f46d6f036f1a897807c4e693e0bb5cd9ac8a8005f06", 16), new Org.BouncyCastle.Math.BigInteger("85944d98396918741316cd0109929cb706af0cca1eaf378219c5286bdc21e979210390573e3047645e1969bdbcb667eb", 16));
+    var P_shared = P_remote.Multiply(nonce);
+    P_shared = P_shared.Normalize();
+    var xCoord = P_shared.AffineXCoord;
+    Console.WriteLine(xCoord);
 
-            ChaChaEngine fuck = new ChaChaEngine();
-            fuck.Reset();
-            var pointX = new byte[48];
-            xCoord.ToBigInteger().ToByteArray(pointX);
-            Console.WriteLine(BitConverter.ToString(pointX).Replace("-", ""));
+    ChaChaEngine fuck = new ChaChaEngine();
+    fuck.Reset();
+    var pointX = new byte[48];
+    xCoord.ToBigInteger().ToByteArray(pointX);
+    Console.WriteLine(BitConverter.ToString(pointX).Replace("-", ""));
 
-            byte[] shitInputBytes = SHA512.Create().ComputeHash(pointX);
-            Console.WriteLine(BitConverter.ToString(shitInputBytes).Replace("-", ""));
+    byte[] shitInputBytes = SHA512.Create().ComputeHash(pointX);
+    Console.WriteLine(BitConverter.ToString(shitInputBytes).Replace("-", ""));
 
-            byte[] slice1 = shitInputBytes[0..32];
-            byte[] slice2 = shitInputBytes[32..40];
-            fuck.Init(true, new ParametersWithIV(new KeyParameter(slice1), slice2));
+    byte[] slice1 = shitInputBytes[0..32];
+    byte[] slice2 = shitInputBytes[32..40];
+    fuck.Init(true, new ParametersWithIV(new KeyParameter(slice1), slice2));
 
-            byte[] inArr = { 0xf2, 0x72, 0xd5, 0x4c, 0x31, 0x86, 0x0f, 0x3f, 0xbd, 0x43, 0xda, 0x3e, 0xe3, 0x25,0x86, 0xdf, 0xd7 ,
+    byte[] inArr = { 0xf2, 0x72, 0xd5, 0x4c, 0x31, 0x86, 0x0f, 0x3f, 0xbd, 0x43, 0xda, 0x3e, 0xe3, 0x25,0x86, 0xdf, 0xd7 ,
 0xc5, 0x0c, 0xea, 0x1c, 0x4a, 0xa0, 0x64, 0xc3,
 0x5a, 0x7f, 0x6e, 0x3a, 0xb0, 0x25, 0x84, 0x41,
 0xac, 0x15, 0x85, 0xc3, 0x62, 0x56, 0xde, 0xa8,
@@ -494,10 +494,10 @@ static void DoSolve()
 0xd4, 0xb8, 0xac, 0x33, 0x6d, 0x40, 0x86, 0xef,
 0xa0, 0xf1, 0x5e, 0x6e, 0x59 ,
 0x0d, 0x1e, 0xc0, 0x6f, 0x36 };
-            byte[] outArr = new byte[inArr.Length];
+    byte[] outArr = new byte[inArr.Length];
 
-            fuck.ProcessBytes(inArr, 0, inArr.Length, outArr, 0);
+    fuck.ProcessBytes(inArr, 0, inArr.Length, outArr, 0);
 
-            Console.WriteLine(BitConverter.ToString(outArr).Replace("-", ""));
-        }
+    Console.WriteLine(BitConverter.ToString(outArr).Replace("-", ""));
+}
 ```
